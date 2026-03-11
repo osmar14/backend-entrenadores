@@ -3,8 +3,16 @@ const cors = require('cors');
 const mysql = require('mysql2/promise');
 const admin = require('firebase-admin');
 
-// 🔐 1. INICIALIZAR EL PODER DE ADMINISTRADOR DE FIREBASE
-const serviceAccount = require('./firebase-secret.json');
+// 🔐 1. INICIALIZAR EL PODER DE ADMINISTRADOR DE FIREBASE (Modo Inteligente)
+let serviceAccount;
+if (process.env.FIREBASE_CREDENTIALS) {
+  // Si estamos en Railway, lee la llave secreta de las variables de entorno
+  serviceAccount = JSON.parse(process.env.FIREBASE_CREDENTIALS);
+} else {
+  // Si estamos en tu compu local, lee el archivo
+  serviceAccount = require('./firebase-secret.json');
+}
+
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount)
 });
@@ -12,6 +20,7 @@ admin.initializeApp({
 const app = express();
 app.use(cors());
 app.use(express.json());
+
 
 // 🗄️ 2. CONEXIÓN A LA BASE DE DATOS MYSQL
 const db = mysql.createPool({
