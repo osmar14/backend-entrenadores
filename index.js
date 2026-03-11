@@ -169,6 +169,25 @@ app.post('/api/rutina-ejercicios', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// 📊 MÉTRICA AVANZADA: Volumen Semanal por Grupo Muscular
+app.get('/api/metricas/volumen/:cliente_id', async (req, res) => {
+    try {
+        // Cuenta las series hechas en los últimos 7 días agrupadas por músculo
+        const query = `
+            SELECT e.grupo_muscular, COUNT(rp.id) as total_series 
+            FROM Registro_Progreso rp
+            JOIN Ejercicios e ON rp.ejercicio_id = e.id
+            WHERE rp.cliente_id = ? AND rp.fecha >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+            GROUP BY e.grupo_muscular
+            ORDER BY total_series DESC
+        `;
+        const [resultados] = await db.query(query, [req.params.cliente_id]);
+        res.json(resultados);
+    } catch (err) { 
+        res.status(500).json({ error: err.message }); 
+    }
+});
+
 app.get('/api/notas/:cliente_id', async (req, res) => {
     try {
         const [resultados] = await db.query('SELECT * FROM Notas_Clientes WHERE cliente_id = ? ORDER BY fecha_creacion DESC', [req.params.cliente_id]);
