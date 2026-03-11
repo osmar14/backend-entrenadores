@@ -1,99 +1,102 @@
 const express = require('express');
 const cors = require('cors');
-const mysql = require('mysql2/promise'); // (O usa 'mysql' si así lo tenías antes)
+const mysql = require('mysql2/promise');
 
 const app = express();
 
-// 🛡️ 1. GUARDIA DE SEGURIDAD (CORS) Y LECTOR DE JSON
 app.use(cors());
 app.use(express.json());
 
-// 🗄️ 2. LLAVES MAESTRAS DE LA BASE DE DATOS EN RAILWAY
+// 🗄️ CONEXIÓN A LA BASE DE DATOS
 const db = mysql.createPool({
-  host: 'mysql.railway.internal',
+  host: 'crossover.proxy.rlwy.net', // Red pública temporal para pruebas locales
   user: 'root',
   password: 'ZCwKXEEmhdNENCbvuqhPAHhCGlywgQEh',
   database: 'railway',
-  port: 3306
+  port: 14373 
 });
 
-// Prueba rápida para que los "Rayos X" nos avisen si todo está bien
+// Prueba de conexión
 db.getConnection()
   .then(connection => {
-    console.log('✅ ¡Base de datos de Railway conectada exitosamente!');
+    console.log('✅ ¡Base de datos conectada exitosamente!');
     connection.release();
   })
-  .catch(err => {
-    console.error('❌ Error conectando a la base de datos:', err);
-  });
+  .catch(err => console.error('❌ Error conectando a BD:', err));
+
+// ==========================================
+// 🛡️ MIDDLEWARE: EL GUARDIA DE SEGURIDAD
+// ==========================================
+async function verificarEntrenador(req, res, next) {
+    const email = req.headers['entrenador-email']; 
+    if (!email) return res.status(401).json({ error: 'Falta identificación (Email/Token)' });
+
+    try {
+        const [entrenadores] = await db.query('SELECT id FROM Entrenadores WHERE email = ?', [email]);
+        if (entrenadores.length === 0) {
+            return res.status(404).json({ error: 'Entrenador no encontrado en la base de datos' });
+        }
+        req.entrenadorId = entrenadores[0].id;
+        next(); 
+    } catch (error) {
+        res.status(500).json({ error: 'Error verificando al entrenador' });
+    }
+}
 
 // ==========================================
 // 🏠 DASHBOARD (INICIO Y ALERTAS)
 // ==========================================
-app.get('/api/dashboard', (req, res) => {
-    const entrenadorEmail = req.headers['entrenador-email'];
-    if (!entrenadorEmail) return res.status(401).json({ error: 'Falta gafete' });
+app.get('/api/dashboard', verificarEntrenador, async (req, res) => {
+    try {
+        const queryNotas = `
+            SELECT n.*, c.nombre as cliente_nombre 
+            FROM Notas_Clientes n 
+            JOIN Clientes c ON n.cliente_id = c.id 
+            WHERE c.entrenador_id = ? 
+            ORDER BY n.fecha_creacion DESC LIMIT 10
+        `;
+        const [notas] = await db.query(queryNotas, [req.entrenadorId]);
 
-    const queryNotas = `
-        SELECT n.*, c.nombre as cliente_nombre 
-        FROM Notas_Clientes n 
-        JOIN Clientes c ON n.cliente_id = c.id 
-        WHERE n.entrenador_email = ? 
-        ORDER BY n.fecha_creacion DESC LIMIT 10
-    `;
-    
-    db.query(queryNotas, [entrenadorEmail])
-        .then(([notas]) => {
-            const queryProgreso = `
-                SELECT rp.fecha, c.nombre as cliente_nombre, rut.nombre as rutina_nombre
-                FROM Registro_Progreso rp
-                JOIN Clientes c ON rp.cliente_id = c.id
-                JOIN Rutinas rut ON rp.rutina_id = rut.id
-                WHERE c.entrenador_email = ?
-                GROUP BY rp.fecha, c.nombre, rut.nombre
-                ORDER BY rp.fecha DESC LIMIT 5
-            `;
-            return db.query(queryProgreso, [entrenadorEmail]).then(([progresos]) => {
-                res.json({ notasRecientes: notas, actividadReciente: progresos });
-            });
-        })
-        .catch(err => res.status(500).json({ error: err.message }));
+        const queryProgreso = `
+            SELECT rp.fecha, c.nombre as cliente_nombre, rut.nombre as rutina_nombre
+            FROM Registro_Progreso rp
+            JOIN Clientes c ON rp.cliente_id = c.id
+            JOIN Rutinas rut ON rp.rutina_id = rut.id
+            WHERE c.entrenador_id = ?
+            GROUP BY rp.fecha, c.nombre, rut.nombre
+            ORDER BY rp.fecha DESC LIMIT 5
+        `;
+        const [progresos] = await db.query(queryProgreso, [req.entrenadorId]);
+
+        res.json({ notasRecientes: notas, actividadReciente: progresos });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // ==========================================
 // 👥 RUTAS DE CLIENTES
 // ==========================================
-app.get('/api/clientes', (req, res) => {
-    const entrenadorEmail = req.headers['entrenador-email'];
-    if (!entrenadorEmail) return res.status(401).json({ error: 'Acceso denegado' });
-
-    const query = 'SELECT * FROM Clientes WHERE entrenador_email = ?';
-    db.query(query, [entrenadorEmail])
+app.get('/api/clientes', verificarEntrenador, (req, res) => {
+    const query = 'SELECT * FROM Clientes WHERE entrenador_id = ?';
+    db.query(query, [req.entrenadorId])
         .then(([resultados]) => res.json(resultados))
         .catch(err => res.status(500).json({ error: err.message }));
 });
 
-app.post('/api/clientes', (req, res) => {
+app.post('/api/clientes', verificarEntrenador, (req, res) => {
     const { nombre, objetivo, dias_entrenamiento } = req.body;
-    const entrenadorEmail = req.headers['entrenador-email'];
-    if (!entrenadorEmail) return res.status(401).json({ error: 'Acceso denegado' });
-
-    const query = 'INSERT INTO Clientes (nombre, objetivo, entrenador_email, dias_entrenamiento) VALUES (?, ?, ?, ?)';
-    db.query(query, [nombre, objetivo, entrenadorEmail, dias_entrenamiento || ''])
-        .then(([resultado]) => res.status(201).json({ id: resultado.insertId, nombre, objetivo, entrenador_email: entrenadorEmail, dias_entrenamiento }))
+    const query = 'INSERT INTO Clientes (nombre, objetivo, entrenador_id, dias_entrenamiento) VALUES (?, ?, ?, ?)';
+    db.query(query, [nombre, objetivo, req.entrenadorId, dias_entrenamiento || ''])
+        .then(([resultado]) => res.status(201).json({ id: resultado.insertId, nombre, objetivo, entrenador_id: req.entrenadorId, dias_entrenamiento }))
         .catch(err => res.status(500).json({ error: err.message }));
 });
 
-// 🌟 NUEVA RUTA PARA ACTUALIZAR LA AGENDA
-app.put('/api/clientes/:id', (req, res) => {
+app.put('/api/clientes/:id', verificarEntrenador, (req, res) => {
     const { id } = req.params;
     const { dias_entrenamiento } = req.body;
-    const entrenadorEmail = req.headers['entrenador-email'];
-
-    if (!entrenadorEmail) return res.status(401).json({ error: 'Acceso denegado' });
-
-    const query = 'UPDATE Clientes SET dias_entrenamiento = ? WHERE id = ? AND entrenador_email = ?';
-    db.query(query, [dias_entrenamiento, id, entrenadorEmail])
+    const query = 'UPDATE Clientes SET dias_entrenamiento = ? WHERE id = ? AND entrenador_id = ?';
+    db.query(query, [dias_entrenamiento, id, req.entrenadorId])
         .then(() => res.json({ message: 'Agenda actualizada' }))
         .catch(err => res.status(500).json({ error: err.message }));
 });
@@ -101,39 +104,33 @@ app.put('/api/clientes/:id', (req, res) => {
 // ==========================================
 // 📋 RUTAS DE RUTINAS
 // ==========================================
-app.get('/api/rutinas', (req, res) => {
-    const entrenadorEmail = req.headers['entrenador-email'];
-    if (!entrenadorEmail) return res.status(401).json({ error: 'Acceso denegado' });
-
-    const query = 'SELECT * FROM Rutinas WHERE entrenador_email = ?';
-    db.query(query, [entrenadorEmail])
+app.get('/api/rutinas', verificarEntrenador, (req, res) => {
+    const query = 'SELECT * FROM Rutinas WHERE entrenador_id = ?';
+    db.query(query, [req.entrenadorId])
         .then(([resultados]) => res.json(resultados))
         .catch(err => res.status(500).json({ error: err.message }));
 });
 
-app.post('/api/rutinas', (req, res) => {
+app.post('/api/rutinas', verificarEntrenador, (req, res) => {
     const { nombre, descripcion, nivel, es_plantilla, cliente_id } = req.body;
-    const entrenadorEmail = req.headers['entrenador-email'];
-    if (!entrenadorEmail) return res.status(401).json({ error: 'Acceso denegado' });
-
     const plantillaValue = es_plantilla !== undefined ? es_plantilla : 1;
-
-    const query = 'INSERT INTO Rutinas (nombre, descripcion, nivel, es_plantilla, cliente_id, entrenador_email) VALUES (?, ?, ?, ?, ?, ?)';
-    db.query(query, [nombre, descripcion, nivel, plantillaValue, cliente_id || null, entrenadorEmail])
+    const query = 'INSERT INTO Rutinas (nombre, descripcion, nivel, es_plantilla, cliente_id, entrenador_id) VALUES (?, ?, ?, ?, ?, ?)';
+    db.query(query, [nombre, descripcion, nivel, plantillaValue, cliente_id || null, req.entrenadorId])
         .then(([resultado]) => res.status(201).json({ id: resultado.insertId, nombre }))
         .catch(err => res.status(500).json({ error: err.message }));
 });
 
-app.delete('/api/rutinas/:id', (req, res) => {
+app.delete('/api/rutinas/:id', verificarEntrenador, (req, res) => {
     const { id } = req.params;
-    db.query('DELETE FROM Rutinas WHERE id = ?', [id])
+    db.query('DELETE FROM Rutinas WHERE id = ? AND entrenador_id = ?', [id, req.entrenadorId])
         .then(() => res.json({ message: 'Plan eliminado' }))
         .catch(err => res.status(500).json({ error: err.message }));
 });
 
-app.post('/api/rutinas/clonar', (req, res) => {
+// 🔄 RUTA CORREGIDA: Clonar rutina usando entrenador_id en lugar de email
+app.post('/api/rutinas/clonar', verificarEntrenador, (req, res) => {
     const { plantilla_id, cliente_id } = req.body;
-    const queryClonarRutina = `INSERT INTO Rutinas (nombre, descripcion, nivel, es_plantilla, cliente_id, entrenador_email) SELECT nombre, descripcion, nivel, 0, ?, entrenador_email FROM Rutinas WHERE id = ?`;
+    const queryClonarRutina = `INSERT INTO Rutinas (nombre, descripcion, nivel, es_plantilla, cliente_id, entrenador_id) SELECT nombre, descripcion, nivel, 0, ?, entrenador_id FROM Rutinas WHERE id = ?`;
     db.query(queryClonarRutina, [cliente_id, plantilla_id])
         .then(([resultRutina]) => {
             const nuevaRutinaId = resultRutina.insertId;
@@ -180,6 +177,7 @@ app.get('/api/notas/:cliente_id', (req, res) => {
 
 app.post('/api/notas', (req, res) => {
     const { cliente_id, categoria, mensaje } = req.body;
+    // Nota: Dejamos el entrenador_email aquí por si tu tabla de Notas_Clientes aún lo usa.
     db.query('INSERT INTO Notas_Clientes (cliente_id, entrenador_email, categoria, mensaje) VALUES (?, ?, ?, ?)', [cliente_id, req.headers['entrenador-email'], categoria, mensaje])
         .then(([resultado]) => res.status(201).json({ id: resultado.insertId, message: 'Nota guardada' }))
         .catch(err => res.status(500).json({ error: err.message }));
@@ -201,7 +199,7 @@ app.post('/api/progreso', (req, res) => {
         .catch(err => res.status(500).json({ error: err.message }));
 });
 
-// 🚂 3. ENCENDIDO DEL MOTOR (PUERTO DINÁMICO)
+// 🚂 ENCENDIDO DEL MOTOR
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚂 Servidor backend volando en el puerto ${PORT}`);

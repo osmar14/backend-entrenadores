@@ -1,15 +1,5 @@
 const mysql = require('mysql2');
 require('dotenv').config();
-
-const db = mysql.createConnection({
-    host: process.env.DB_HOST,
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
-    database: process.env.DB_NAME,
-    port: process.env.DB_PORT,
-    multipleStatements: true // Permite ejecutar varias órdenes a la vez
-});
-
 const megaCatalogo = [
     // PECHO
     ['Press de Banca con Barra', 'Pecho'], ['Press de Banca Inclinado con Barra', 'Pecho'], ['Press de Banca Declinado', 'Pecho'], ['Press Inclinado con Mancuernas', 'Pecho'], ['Press Plano con Mancuernas', 'Pecho'], ['Aperturas Planas con Mancuernas', 'Pecho'], ['Aperturas Inclinadas con Mancuernas', 'Pecho'], ['Cruces en Polea Alta', 'Pecho'], ['Cruces en Polea Baja', 'Pecho'], ['Pec Deck (Máquina)', 'Pecho'], ['Fondos en Paralelas (Pecho)', 'Pecho'], ['Pullover con Mancuerna', 'Pecho'],
@@ -49,4 +39,12 @@ db.connect((err) => {
         }
         process.exit();
     });
+});
+// 🗄️ 2. LLAVES MAESTRAS DE LA BASE DE DATOS EN RAILWAY
+const db = mysql.createPool({
+  host: 'mysql.railway.internal',
+  user: 'root',
+  password: 'ZCwKXEEmhdNENCbvuqhPAHhCGlywgQEh',
+  database: 'railway',
+  port: 3306
 });
