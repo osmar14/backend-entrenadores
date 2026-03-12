@@ -241,6 +241,26 @@ app.post('/api/progreso', verificarUsuario, async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ==========================================
+// 🌟 REGISTRO DE ENTRENADORES NUEVOS
+// ==========================================
+app.post('/api/entrenadores/registro', async (req, res) => {
+    try {
+        const { email } = req.body;
+        // Revisamos si ya existe
+        const [existe] = await db.query('SELECT id FROM Entrenadores WHERE email = ?', [email]);
+        
+        if (existe.length === 0) {
+            // Si no existe, lo insertamos en la base de datos de Railway
+            const nombre = email.split('@')[0]; // Tomamos la primera parte del correo como nombre temporal
+            await db.query('INSERT INTO Entrenadores (nombre, email) VALUES (?, ?)', [nombre, email]);
+        }
+        res.status(200).json({ message: "Entrenador verificado/creado" });
+    } catch (err) { 
+        res.status(500).json({ error: err.message }); 
+    }
+});
+
 // 🚂 ENCENDIDO DEL MOTOR
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => { console.log(`🚂 Servidor backend V2 volando en el puerto ${PORT}`); });
