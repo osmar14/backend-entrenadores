@@ -169,6 +169,24 @@ app.post('/api/rutina-ejercicios', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// 🗣️ MÉTRICA: Extraer todo el feedback y notas del cliente
+app.get('/api/feedback-cliente/:cliente_id', async (req, res) => {
+    try {
+        const query = `
+            SELECT rp.fecha, rp.notas_cliente, e.nombre as ejercicio_nombre 
+            FROM Registro_Progreso rp
+            JOIN Ejercicios e ON rp.ejercicio_id = e.id
+            WHERE rp.cliente_id = ? AND rp.notas_cliente IS NOT NULL AND rp.notas_cliente != ''
+            ORDER BY rp.fecha DESC
+            LIMIT 20
+        `;
+        const [resultados] = await db.query(query, [req.params.cliente_id]);
+        res.json(resultados);
+    } catch (err) { 
+        res.status(500).json({ error: err.message }); 
+    }
+});
+
 // 📊 MÉTRICA AVANZADA: Volumen Semanal por Grupo Muscular
 app.get('/api/metricas/volumen/:cliente_id', async (req, res) => {
     try {
