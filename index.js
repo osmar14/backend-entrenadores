@@ -29,34 +29,49 @@ const db = mysql.createPool({
 });
 
 // ==========================================
-// 🛡️ MIDDLEWARE INTELIGENTE
+// 🛡️ MIDDLEWARE INTELIGENTE (BLINDADO CON JWT)
 // ==========================================
 async function verificarUsuario(req, res, next) {
-    const email = req.headers['usuario-email'] || req.headers['entrenador-email']; 
-    if (!email) return res.status(401).json({ error: 'Falta identificación' });
+    // 1. Buscamos el token en las cabeceras (Formato: "Bearer eyJhbGciOi...")
+    const authHeader = req.headers.authorization;
+    
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ error: 'Acceso denegado: Falta el Token de Seguridad' });
+    }
+
+    const token = authHeader.split('Bearer ')[1];
 
     try {
-        const [entrenadores] = await db.query('SELECT id FROM Entrenadores WHERE email = ?', [email]);
+        // 🔐 2. El Admin SDK de Firebase desencripta y valida el token matemáticamente
+        const decodedToken = await admin.auth().verifyIdToken(token);
+        const emailSeguro = decodedToken.email; // Este correo es imposible de falsificar
+
+        if (!emailSeguro) return res.status(401).json({ error: 'Token inválido o sin correo asociado' });
+
+        // 🗄️ 3. Buscamos en MySQL usando el correo 100% verificado
+        const [entrenadores] = await db.query('SELECT id FROM Entrenadores WHERE email = ?', [emailSeguro]);
         if (entrenadores.length > 0) {
             req.usuarioId = entrenadores[0].id;
             req.rol = 'entrenador';
+            req.emailSeguro = emailSeguro; // Lo guardamos por si otras rutas lo necesitan
             return next();
         }
 
-        const [clientes] = await db.query('SELECT id, entrenador_id FROM Clientes WHERE email = ?', [email]);
+        const [clientes] = await db.query('SELECT id, entrenador_id FROM Clientes WHERE email = ?', [emailSeguro]);
         if (clientes.length > 0) {
             req.usuarioId = clientes[0].id;
             req.entrenadorId = clientes[0].entrenador_id; 
             req.rol = 'cliente';
+            req.emailSeguro = emailSeguro;
             return next();
         }
 
-        return res.status(404).json({ error: 'Usuario no encontrado' });
+        return res.status(404).json({ error: 'Usuario no encontrado en la base de datos' });
     } catch (error) {
-        res.status(500).json({ error: 'Error verificando al usuario' });
+        console.error("🚨 Intento de acceso bloqueado / Token inválido:", error.message);
+        return res.status(401).json({ error: 'Token expirado, inválido o manipulado' });
     }
 }
-
 // ==========================================
 // 🏠 DASHBOARD
 // ==========================================
@@ -245,11 +260,12 @@ app.get('/api/notas/:cliente_id', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+
 app.post('/api/notas', verificarUsuario, async (req, res) => {
     const { cliente_id, categoria, mensaje } = req.body;
     try {
-        // Obtenemos el email para guardarlo en la nota (compatibilidad hacia atrás)
-        const email = req.headers['usuario-email'] || req.headers['entrenador-email'];
+        // 🛡️ Ahora usamos el correo seguro que nos validó Firebase en el Middleware
+        const email = req.emailSeguro; 
         const [resultado] = await db.query('INSERT INTO Notas_Clientes (cliente_id, entrenador_email, categoria, mensaje) VALUES (?, ?, ?, ?)', [cliente_id, email, categoria, mensaje]);
         res.status(201).json({ id: resultado.insertId });
     } catch (err) { res.status(500).json({ error: err.message }); }
