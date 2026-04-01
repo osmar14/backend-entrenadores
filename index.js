@@ -122,6 +122,17 @@ app.post('/api/rutinas', verificarUsuario, async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// 🌟 NUEVO: RUTA PUT PARA EDITAR RUTINAS EXISTENTES (Cerrando el agujero negro)
+app.put('/api/rutinas/:id', verificarUsuario, async (req, res) => {
+    if (req.rol !== 'entrenador') return res.status(403).json({ error: 'Solo entrenadores' });
+    const { nombre, descripcion, nivel } = req.body;
+    try {
+        await db.query('UPDATE Rutinas SET nombre = ?, descripcion = ?, nivel = ? WHERE id = ? AND entrenador_id = ?', 
+        [nombre, descripcion, nivel || 'Principiante', req.params.id, req.usuarioId]);
+        res.json({ message: 'Rutina actualizada' });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.delete('/api/rutinas/:id', verificarUsuario, async (req, res) => {
     if (req.rol !== 'entrenador') return res.status(403).json({ error: 'Solo entrenadores' });
     try {
@@ -136,7 +147,8 @@ app.post('/api/rutinas/clonar', verificarUsuario, async (req, res) => {
     try {
         const [resultRutina] = await db.query(`INSERT INTO Rutinas (nombre, descripcion, nivel, es_plantilla, cliente_id, entrenador_id) SELECT nombre, descripcion, nivel, 0, ?, entrenador_id FROM Rutinas WHERE id = ?`, [cliente_id, plantilla_id]);
         const nuevaRutinaId = resultRutina.insertId;
-        await db.query(`INSERT INTO Rutina_Ejercicios (rutina_id, ejercicio_id, series_objetivo, reps_objetivo, rir_objetivo, notas_entrenador, dia_nombre) SELECT ?, ejercicio_id, series_objetivo, reps_objetivo, rir_objetivo, notas_entrenador, dia_nombre FROM Rutina_Ejercicios WHERE rutina_id = ?`, [nuevaRutinaId, plantilla_id]);
+        // 🌟 ACTUALIZADO PARA COPIAR TAMBIÉN EL ORDEN Y SUPER SERIES AL CLONAR
+        await db.query(`INSERT INTO Rutina_Ejercicios (rutina_id, ejercicio_id, series_objetivo, reps_objetivo, rir_objetivo, notas_entrenador, dia_nombre, orden, grupo_superserie) SELECT ?, ejercicio_id, series_objetivo, reps_objetivo, rir_objetivo, notas_entrenador, dia_nombre, orden, grupo_superserie FROM Rutina_Ejercicios WHERE rutina_id = ?`, [nuevaRutinaId, plantilla_id]);
         res.status(201).json({ message: 'Rutina clonada', nuevaRutinaId });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -153,7 +165,14 @@ app.get('/api/ejercicios', async (req, res) => {
 
 app.get('/api/rutina-ejercicios/:rutina_id', async (req, res) => {
     try {
-        const [resultados] = await db.query(`SELECT re.*, e.nombre, e.grupo_muscular FROM Rutina_Ejercicios re JOIN Ejercicios e ON re.ejercicio_id = e.id WHERE re.rutina_id = ?`, [req.params.rutina_id]);
+        // 🌟 AÑADIDO: Ahora pide el tipo_metrica y ordena automáticamente por la columna 'orden'
+        const [resultados] = await db.query(`
+            SELECT re.*, e.nombre, e.grupo_muscular, e.tipo_metrica 
+            FROM Rutina_Ejercicios re 
+            JOIN Ejercicios e ON re.ejercicio_id = e.id 
+            WHERE re.rutina_id = ?
+            ORDER BY re.dia_nombre ASC, re.orden ASC, re.id ASC
+        `, [req.params.rutina_id]);
         res.json(resultados);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -163,8 +182,21 @@ app.post('/api/rutina-ejercicios', async (req, res) => {
     try {
         await db.query('DELETE FROM Rutina_Ejercicios WHERE rutina_id = ?', [rutina_id]);
         if (!ejercicios || ejercicios.length === 0) return res.json({ message: 'Vaciado' });
-        const values = ejercicios.map(e => [rutina_id, e.id, e.series_objetivo, e.reps_objetivo, e.dia_nombre, e.rir_objetivo || null, e.notas_entrenador || '']);
-        await db.query('INSERT INTO Rutina_Ejercicios (rutina_id, ejercicio_id, series_objetivo, reps_objetivo, dia_nombre, rir_objetivo, notas_entrenador) VALUES ?', [values]);
+        
+        // 🌟 PREPARADO PARA EL PLAN PRO: Guarda orden y superseries (o valores por defecto)
+        const values = ejercicios.map((e, index) => [
+            rutina_id, 
+            e.id || e.ejercicio_id, 
+            e.series_objetivo, 
+            e.reps_objetivo, 
+            e.dia_nombre, 
+            e.rir_objetivo || null, 
+            e.notas_entrenador || '',
+            e.orden !== undefined ? e.orden : index, // Si no hay orden manual, usa el orden en el que llegaron
+            e.grupo_superserie || null
+        ]);
+        
+        await db.query(`INSERT INTO Rutina_Ejercicios (rutina_id, ejercicio_id, series_objetivo, reps_objetivo, dia_nombre, rir_objetivo, notas_entrenador, orden, grupo_superserie) VALUES ?`, [values]);
         res.status(201).json({ message: 'Guardados' });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
