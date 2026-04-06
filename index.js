@@ -1,3 +1,4 @@
+require('dotenv').config(); // 🔐 0. CARGA LAS VARIABLES DE ENTORNO DESDE EL ARCHIVO .env
 const express = require('express');
 const cors = require('cors');
 const mysql = require('mysql2/promise');
@@ -19,20 +20,19 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// 🗄️ 2. CONEXIÓN A LA BASE DE DATOS
+// 🗄️ 2. CONEXIÓN A LA BASE DE DATOS (BLINDADA)
 const db = mysql.createPool({
-  host: 'crossover.proxy.rlwy.net', 
-  user: 'root',
-  password: 'ZCwKXEEmhdNENCbvuqhPAHhCGlywgQEh',
-  database: 'railway',
-  port: 14373 
+  host: process.env.DB_HOST, 
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  database: process.env.DB_NAME,
+  port: process.env.DB_PORT || 14373 
 });
 
 // ==========================================
 // 🛡️ MIDDLEWARE INTELIGENTE (BLINDADO CON JWT)
 // ==========================================
 async function verificarUsuario(req, res, next) {
-    // 1. Buscamos el token en las cabeceras (Formato: "Bearer eyJhbGciOi...")
     const authHeader = req.headers.authorization;
     
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -42,18 +42,16 @@ async function verificarUsuario(req, res, next) {
     const token = authHeader.split('Bearer ')[1];
 
     try {
-        // 🔐 2. El Admin SDK de Firebase desencripta y valida el token matemáticamente
         const decodedToken = await admin.auth().verifyIdToken(token);
-        const emailSeguro = decodedToken.email; // Este correo es imposible de falsificar
+        const emailSeguro = decodedToken.email; 
 
         if (!emailSeguro) return res.status(401).json({ error: 'Token inválido o sin correo asociado' });
 
-        // 🗄️ 3. Buscamos en MySQL usando el correo 100% verificado
         const [entrenadores] = await db.query('SELECT id FROM Entrenadores WHERE email = ?', [emailSeguro]);
         if (entrenadores.length > 0) {
             req.usuarioId = entrenadores[0].id;
             req.rol = 'entrenador';
-            req.emailSeguro = emailSeguro; // Lo guardamos por si otras rutas lo necesitan
+            req.emailSeguro = emailSeguro; 
             return next();
         }
 
@@ -72,6 +70,7 @@ async function verificarUsuario(req, res, next) {
         return res.status(401).json({ error: 'Token expirado, inválido o manipulado' });
     }
 }
+
 // ==========================================
 // 🏠 DASHBOARD
 // ==========================================
@@ -85,7 +84,7 @@ app.get('/api/dashboard', verificarUsuario, async (req, res) => {
 });
 
 // ==========================================
-// 👥 CLIENTES
+// 👥 CLIENTES (CON LÓGICA DE NEGOCIO VIP)
 // ==========================================
 app.get('/api/clientes', verificarUsuario, async (req, res) => {
     if (req.rol !== 'entrenador') return res.status(403).json({ error: 'Acceso denegado' });
@@ -97,13 +96,39 @@ app.get('/api/clientes', verificarUsuario, async (req, res) => {
 
 app.post('/api/clientes', verificarUsuario, async (req, res) => {
     if (req.rol !== 'entrenador') return res.status(403).json({ error: 'Solo entrenadores' });
+    
     const { nombre, email, objetivo, dias_entrenamiento } = req.body;
     if (!email) return res.status(400).json({ error: 'El correo es obligatorio' });
 
     try {
+        // 1. OBTENER ESTADO DE SUSCRIPCIÓN DEL ENTRENADOR
+        const [entrenadorData] = await db.query('SELECT plan_actual FROM Entrenadores WHERE id = ?', [req.usuarioId]);
+        // Si no existe la columna o el valor, asumimos 'TRIAL'
+        const planActual = (entrenadorData[0] && entrenadorData[0].plan_actual) ? entrenadorData[0].plan_actual : 'TRIAL';
+
+        // 2. CONTAR SUS CLIENTES ACTUALES
+        const [conteo] = await db.query('SELECT COUNT(*) as total FROM Clientes WHERE entrenador_id = ?', [req.usuarioId]);
+        const totalClientes = conteo[0].total;
+
+        // 3. EL MURO DE PAGO (PAYWALL DE 4 CLIENTES)
+        if (planActual === 'TRIAL' && totalClientes >= 4) {
+            return res.status(402).json({ 
+                error: 'Límite alcanzado', 
+                mensaje: 'Has alcanzado el límite de 4 clientes de prueba. Actualiza a Pro para crecer tu negocio.' 
+            });
+        }
+
+        // 4. CREAR EL CLIENTE (is_vip activado si es TRIAL o PRO)
+        const isVip = (planActual === 'PRO' || planActual === 'TRIAL') ? 1 : 0;
         const contraseñaTemporal = 'Entrena123!';
+        
         const userRecord = await admin.auth().createUser({ email: email, password: contraseñaTemporal, displayName: nombre });
-        const [resultado] = await db.query('INSERT INTO Clientes (nombre, email, objetivo, entrenador_id, dias_entrenamiento, firebase_uid) VALUES (?, ?, ?, ?, ?, ?)', [nombre, email, objetivo, req.usuarioId, dias_entrenamiento || '', userRecord.uid]);
+        
+        const [resultado] = await db.query(
+            'INSERT INTO Clientes (nombre, email, objetivo, entrenador_id, dias_entrenamiento, firebase_uid, is_vip) VALUES (?, ?, ?, ?, ?, ?, ?)', 
+            [nombre, email, objetivo, req.usuarioId, dias_entrenamiento || '', userRecord.uid, isVip]
+        );
+        
         res.status(201).json({ id: resultado.insertId, nombre, email, password_temporal: contraseñaTemporal });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -137,7 +162,6 @@ app.post('/api/rutinas', verificarUsuario, async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// 🌟 NUEVO: RUTA PUT PARA EDITAR RUTINAS EXISTENTES (Cerrando el agujero negro)
 app.put('/api/rutinas/:id', verificarUsuario, async (req, res) => {
     if (req.rol !== 'entrenador') return res.status(403).json({ error: 'Solo entrenadores' });
     const { nombre, descripcion, nivel } = req.body;
@@ -162,14 +186,14 @@ app.post('/api/rutinas/clonar', verificarUsuario, async (req, res) => {
     try {
         const [resultRutina] = await db.query(`INSERT INTO Rutinas (nombre, descripcion, nivel, es_plantilla, cliente_id, entrenador_id) SELECT nombre, descripcion, nivel, 0, ?, entrenador_id FROM Rutinas WHERE id = ?`, [cliente_id, plantilla_id]);
         const nuevaRutinaId = resultRutina.insertId;
-        // 🌟 ACTUALIZADO PARA COPIAR TAMBIÉN EL ORDEN Y SUPER SERIES AL CLONAR
-        await db.query(`INSERT INTO Rutina_Ejercicios (rutina_id, ejercicio_id, series_objetivo, reps_objetivo, rir_objetivo, notas_entrenador, dia_nombre, orden, grupo_superserie) SELECT ?, ejercicio_id, series_objetivo, reps_objetivo, rir_objetivo, notas_entrenador, dia_nombre, orden, grupo_superserie FROM Rutina_Ejercicios WHERE rutina_id = ?`, [nuevaRutinaId, plantilla_id]);
+        // Clonación actualizada con los campos Pro
+        await db.query(`INSERT INTO Rutina_Ejercicios (rutina_id, ejercicio_id, series_objetivo, reps_objetivo, rir_objetivo, notas_entrenador, dia_nombre, orden, grupo_superserie, tempo, es_unilateral, segundos_objetivo) SELECT ?, ejercicio_id, series_objetivo, reps_objetivo, rir_objetivo, notas_entrenador, dia_nombre, orden, grupo_superserie, tempo, es_unilateral, segundos_objetivo FROM Rutina_Ejercicios WHERE rutina_id = ?`, [nuevaRutinaId, plantilla_id]);
         res.status(201).json({ message: 'Rutina clonada', nuevaRutinaId });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // ==========================================
-// 🏋️‍♂️ EJERCICIOS, PROGRESO Y NOTAS
+// 🏋️‍♂️ EJERCICIOS Y PRESCRIPCIÓN PRO
 // ==========================================
 app.get('/api/ejercicios', async (req, res) => {
     try {
@@ -180,7 +204,6 @@ app.get('/api/ejercicios', async (req, res) => {
 
 app.get('/api/rutina-ejercicios/:rutina_id', async (req, res) => {
     try {
-        // 🌟 AÑADIDO: Ahora pide el tipo_metrica y ordena automáticamente por la columna 'orden'
         const [resultados] = await db.query(`
             SELECT re.*, e.nombre, e.grupo_muscular, e.tipo_metrica 
             FROM Rutina_Ejercicios re 
@@ -198,7 +221,6 @@ app.post('/api/rutina-ejercicios', async (req, res) => {
         await db.query('DELETE FROM Rutina_Ejercicios WHERE rutina_id = ?', [rutina_id]);
         if (!ejercicios || ejercicios.length === 0) return res.json({ message: 'Vaciado' });
         
-        // 🌟 PREPARADO PARA EL PLAN PRO: Guarda orden y superseries (o valores por defecto)
         const values = ejercicios.map((e, index) => [
             rutina_id, 
             e.id || e.ejercicio_id, 
@@ -207,16 +229,22 @@ app.post('/api/rutina-ejercicios', async (req, res) => {
             e.dia_nombre, 
             e.rir_objetivo || null, 
             e.notas_entrenador || '',
-            e.orden !== undefined ? e.orden : index, // Si no hay orden manual, usa el orden en el que llegaron
-            e.grupo_superserie || null
+            e.orden !== undefined ? e.orden : index,
+            e.grupo_superserie || null,
+            // --- CAMPOS PRO INTEGRADOS ---
+            e.tempo || null,
+            e.es_unilateral ? 1 : 0,
+            e.segundos_objetivo || null
         ]);
         
-        await db.query(`INSERT INTO Rutina_Ejercicios (rutina_id, ejercicio_id, series_objetivo, reps_objetivo, dia_nombre, rir_objetivo, notas_entrenador, orden, grupo_superserie) VALUES ?`, [values]);
-        res.status(201).json({ message: 'Guardados' });
+        await db.query(`INSERT INTO Rutina_Ejercicios (rutina_id, ejercicio_id, series_objetivo, reps_objetivo, dia_nombre, rir_objetivo, notas_entrenador, orden, grupo_superserie, tempo, es_unilateral, segundos_objetivo) VALUES ?`, [values]);
+        res.status(201).json({ message: 'Guardados con parámetros Pro' });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// 🗣️ MÉTRICA: Extraer todo el feedback y notas del cliente
+// ==========================================
+// 📊 PROGRESO, MÉTRICAS Y NOTAS
+// ==========================================
 app.get('/api/feedback-cliente/:cliente_id', async (req, res) => {
     try {
         const query = `
@@ -229,15 +257,11 @@ app.get('/api/feedback-cliente/:cliente_id', async (req, res) => {
         `;
         const [resultados] = await db.query(query, [req.params.cliente_id]);
         res.json(resultados);
-    } catch (err) { 
-        res.status(500).json({ error: err.message }); 
-    }
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// 📊 MÉTRICA AVANZADA: Volumen Semanal por Grupo Muscular
 app.get('/api/metricas/volumen/:cliente_id', async (req, res) => {
     try {
-        // Cuenta las series hechas en los últimos 7 días agrupadas por músculo
         const query = `
             SELECT e.grupo_muscular, COUNT(rp.id) as total_series 
             FROM Registro_Progreso rp
@@ -248,9 +272,7 @@ app.get('/api/metricas/volumen/:cliente_id', async (req, res) => {
         `;
         const [resultados] = await db.query(query, [req.params.cliente_id]);
         res.json(resultados);
-    } catch (err) { 
-        res.status(500).json({ error: err.message }); 
-    }
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.get('/api/notas/:cliente_id', async (req, res) => {
@@ -260,11 +282,9 @@ app.get('/api/notas/:cliente_id', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-
 app.post('/api/notas', verificarUsuario, async (req, res) => {
     const { cliente_id, categoria, mensaje } = req.body;
     try {
-        // 🛡️ Ahora usamos el correo seguro que nos validó Firebase en el Middleware
         const email = req.emailSeguro; 
         const [resultado] = await db.query('INSERT INTO Notas_Clientes (cliente_id, entrenador_email, categoria, mensaje) VALUES (?, ?, ?, ?)', [cliente_id, email, categoria, mensaje]);
         res.status(201).json({ id: resultado.insertId });
@@ -295,18 +315,14 @@ app.post('/api/progreso', verificarUsuario, async (req, res) => {
 app.post('/api/entrenadores/registro', async (req, res) => {
     try {
         const { email } = req.body;
-        // Revisamos si ya existe
         const [existe] = await db.query('SELECT id FROM Entrenadores WHERE email = ?', [email]);
         
         if (existe.length === 0) {
-            // Si no existe, lo insertamos en la base de datos de Railway
-            const nombre = email.split('@')[0]; // Tomamos la primera parte del correo como nombre temporal
-            await db.query('INSERT INTO Entrenadores (nombre, email) VALUES (?, ?)', [nombre, email]);
+            const nombre = email.split('@')[0];
+            await db.query('INSERT INTO Entrenadores (nombre, email, plan_actual) VALUES (?, ?, ?)', [nombre, email, 'TRIAL']);
         }
         res.status(200).json({ message: "Entrenador verificado/creado" });
-    } catch (err) { 
-        res.status(500).json({ error: err.message }); 
-    }
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // 🚂 ENCENDIDO DEL MOTOR
