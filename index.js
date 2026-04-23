@@ -19,6 +19,16 @@ admin.initializeApp({
 });
 
 const app = express();
+const http = require('http');
+const { Server } = require('socket.io');
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"]
+  }
+});
+
 app.use(cors());
 
 // ==========================================
@@ -540,6 +550,45 @@ app.get('/api/progreso/:cliente_id/:rutina_id', verificarUsuario, verificarPropi
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+app.get('/api/progreso-global/:cliente_id', verificarUsuario, verificarPropiedadCliente, async (req, res) => {
+    try {
+        const query = `
+            SELECT rp.fecha, rp.rutina_id, r.nombre as rutina_nombre
+            FROM Registro_Progreso rp
+            LEFT JOIN Rutinas r ON rp.rutina_id = r.id
+            WHERE rp.cliente_id = ?
+            GROUP BY rp.fecha, rp.rutina_id, r.nombre
+            ORDER BY rp.fecha DESC
+            LIMIT 5
+        `;
+        const [resultados] = await db.query(query, [req.params.cliente_id]);
+        res.json(resultados);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ==========================================
+// 📸 FOTOS DE PROGRESO
+// ==========================================
+app.get('/api/fotos/:cliente_id', verificarUsuario, verificarPropiedadCliente, async (req, res) => {
+    try {
+        const [resultados] = await db.query('SELECT * FROM Fotos_Progreso WHERE cliente_id = ? ORDER BY fecha_captura DESC', [req.params.cliente_id]);
+        res.json(resultados);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/fotos', verificarUsuario, async (req, res) => {
+    const { cliente_id, url_foto, peso_kg } = req.body;
+    // Si es cliente, validar que solo pueda subir sus propias fotos
+    if (req.rol === 'cliente' && req.usuarioId !== parseInt(cliente_id)) {
+        return res.status(403).json({ error: 'No puedes subir fotos para otro cliente' });
+    }
+    // TODO: Verificar límite de plan (Básico vs Pro)
+    try {
+        await db.query('INSERT INTO Fotos_Progreso (cliente_id, url_foto, fecha_captura, peso_kg) VALUES (?, ?, NOW(), ?)', [cliente_id, url_foto, peso_kg || null]);
+        res.json({ message: 'Foto guardada correctamente' });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.post('/api/progreso', verificarUsuario, async (req, res) => {
     const { rutina_id, registros } = req.body;
     const clienteId = req.rol === 'cliente' ? req.usuarioId : req.body.cliente_id;
@@ -651,6 +700,40 @@ app.post('/api/portal-suscripcion', verificarUsuario, async (req, res) => {
     }
 });
 
+// ==========================================
+// 📡 COACHBOARD LIVE (SOCKET.IO)
+// ==========================================
+io.on('connection', (socket) => {
+    console.log('🔗 Cliente conectado a Coachboard Live:', socket.id);
+
+    // Entrenador se une a su canal privado
+    socket.on('unirse_como_coach', (coachId) => {
+        socket.join(`coach_${coachId}`);
+        console.log(`👨‍🏫 Coach ${coachId} listo para monitorear en vivo`);
+    });
+
+    // Cliente inicia rutina
+    socket.on('iniciar_entrenamiento', (data) => {
+        // data: { coachId, clienteId, clienteNombre, rutinaNombre }
+        io.to(`coach_${data.coachId}`).emit('cliente_entrenando', data);
+    });
+
+    // Cliente actualiza una serie (escribe peso/reps)
+    socket.on('actualizar_serie', (data) => {
+        // data: { coachId, clienteId, ejercicio, set, peso, reps }
+        io.to(`coach_${data.coachId}`).emit('progreso_en_vivo', data);
+    });
+
+    // Cliente termina rutina
+    socket.on('terminar_entrenamiento', (data) => {
+        io.to(`coach_${data.coachId}`).emit('cliente_termino', data);
+    });
+
+    socket.on('disconnect', () => {
+        console.log('🔴 Cliente desconectado de Coachboard Live:', socket.id);
+    });
+});
+
 // 🚂 ENCENDIDO DEL MOTOR
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => { console.log(`🚂 Servidor backend V3 (Planes de Pago) volando en el puerto ${PORT}`); });
+server.listen(PORT, () => { console.log(`🚂 Servidor backend V3 (Live + Pago) volando en el puerto ${PORT}`); });
