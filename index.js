@@ -576,9 +576,9 @@ app.get('/api/entrenadores/perfil', verificarUsuario, async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// 🔐 SOLO PARA DESARROLLO — Eliminar en producción
+// 🔐 SOLO PARA DESARROLLO — Eliminar en producción (Temporalmente activado para que puedas cambiar planes libremente)
 app.put('/api/entrenadores/test-plan', verificarUsuario, async (req, res) => {
-    if (process.env.NODE_ENV === 'production') return res.status(403).json({ error: 'Endpoint deshabilitado en producción' });
+    // if (process.env.NODE_ENV === 'production') return res.status(403).json({ error: 'Endpoint deshabilitado en producción' });
     if (req.rol !== 'entrenador') return res.status(403).json({ error: 'Solo entrenadores' });
     const { nuevo_plan } = req.body; // 'TRIAL', 'BASICO', 'PRO'
     try {
