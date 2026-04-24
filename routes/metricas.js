@@ -89,4 +89,32 @@ router.get('/1rm/:cliente_id/:ejercicio_id', verificarUsuario, verificarPropieda
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+router.get('/pr/:cliente_id/:ejercicio_id', verificarUsuario, verificarPropiedadCliente, async (req, res) => {
+    try {
+        const query = `
+            SELECT MAX(peso_kg) as pr 
+            FROM Registro_Progreso 
+            WHERE cliente_id = ? AND ejercicio_id = ? AND fecha >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+        `;
+        const [resultados] = await db.query(query, [req.params.cliente_id, req.params.ejercicio_id]);
+        res.json({ pr: resultados[0].pr || 0 });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.get('/volumen-carga-total/:cliente_id', verificarUsuario, verificarPropiedadCliente, async (req, res) => {
+    try {
+        const query = `
+            SELECT DATE_FORMAT(fecha, '%Y-%m-%d') as fecha_corta, 
+                   SUM(peso_kg * repeticiones) as volumen_total 
+            FROM Registro_Progreso 
+            WHERE cliente_id = ? AND peso_kg > 0 AND repeticiones > 0 AND fecha >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+            GROUP BY DATE_FORMAT(fecha, '%Y-%m-%d')
+            ORDER BY fecha_corta ASC
+            LIMIT 15
+        `;
+        const [resultados] = await db.query(query, [req.params.cliente_id]);
+        res.json(resultados);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 module.exports = router;
