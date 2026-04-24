@@ -13,13 +13,18 @@ router.get('/:cliente_id/:rutina_id', verificarUsuario, verificarPropiedadClient
 router.get('/global/:cliente_id', verificarUsuario, verificarPropiedadCliente, async (req, res) => {
     try {
         const query = `
-            SELECT rp.fecha, rp.rutina_id, r.nombre as rutina_nombre
+            SELECT 
+                rp.fecha, 
+                rp.rutina_id, 
+                r.nombre as rutina_nombre,
+                GROUP_CONCAT(DISTINCT e.nombre SEPARATOR ', ') as ejercicios
             FROM Registro_Progreso rp
             LEFT JOIN Rutinas r ON rp.rutina_id = r.id
+            LEFT JOIN Ejercicios e ON rp.ejercicio_id = e.id
             WHERE rp.cliente_id = ?
             GROUP BY rp.fecha, rp.rutina_id, r.nombre
             ORDER BY rp.fecha DESC
-            LIMIT 5
+            LIMIT 10
         `;
         const [resultados] = await db.query(query, [req.params.cliente_id]);
         res.json(resultados);
