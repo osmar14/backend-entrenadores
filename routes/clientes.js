@@ -7,8 +7,41 @@ const { verificarUsuario } = require('../middlewares/auth');
 router.get('/', verificarUsuario, async (req, res) => {
     if (req.rol !== 'entrenador') return res.status(403).json({ error: 'Acceso denegado' });
     try {
-        const [resultados] = await db.query('SELECT * FROM Clientes WHERE entrenador_id = ?', [req.usuarioId]);
-        res.json(resultados);
+        const [clientes] = await db.query('SELECT * FROM Clientes WHERE entrenador_id = ?', [req.usuarioId]);
+        
+        // Agregar Semáforo de Fatiga a cada cliente
+        for (let cliente of clientes) {
+            let semaforo = 'Verde'; // Por defecto
+
+            // 1. Verificar si hay notas recientes de lesión (últimos 7 días)
+            const [notas] = await db.query(`
+                SELECT COUNT(*) as total_lesiones 
+                FROM Notas_Clientes 
+                WHERE cliente_id = ? AND fecha_creacion >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+                AND (LOWER(categoria) LIKE '%lesion%' OR LOWER(categoria) LIKE '%lesión%' 
+                     OR LOWER(mensaje) LIKE '%lesion%' OR LOWER(mensaje) LIKE '%lesión%')
+            `, [cliente.id]);
+
+            // 2. Verificar cuántos RIR = 0 o '0' tiene en los últimos 7 días
+            const [progreso] = await db.query(`
+                SELECT COUNT(*) as rir_cero 
+                FROM Registro_Progreso 
+                WHERE cliente_id = ? AND (rir = '0' OR rir = 0) AND fecha >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+            `, [cliente.id]);
+
+            const tieneLesion = notas[0].total_lesiones > 0;
+            const cantidadRirCero = progreso[0].rir_cero;
+
+            if (tieneLesion || cantidadRirCero >= 4) {
+                semaforo = 'Rojo';
+            } else if (cantidadRirCero >= 2) {
+                semaforo = 'Amarillo';
+            }
+
+            cliente.semaforo = semaforo;
+        }
+
+        res.json(clientes);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

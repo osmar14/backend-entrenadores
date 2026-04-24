@@ -64,6 +64,7 @@ app.use(express.json());
 app.use('/api/dashboard', require('./routes/dashboard'));
 app.use('/api/clientes', require('./routes/clientes'));
 app.use('/api/rutinas', require('./routes/rutinas'));
+app.use('/api/rutina-ejercicios', require('./routes/rutina_ejercicios'));
 app.use('/api/ejercicios', require('./routes/ejercicios'));
 app.use('/api/metricas', require('./routes/metricas'));
 app.use('/api/notas', require('./routes/notas'));
