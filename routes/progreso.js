@@ -33,14 +33,17 @@ router.get('/global/:cliente_id', verificarUsuario, verificarPropiedadCliente, a
                 DATE(rp.fecha) as dia_entrenamiento, 
                 rp.rutina_id, 
                 r.nombre as rutina_nombre,
+                re.dia_nombre, -- AÑADIDO: Traemos el nombre del Día (Ej. "Día 1", "brazo")
                 GROUP_CONCAT(DISTINCT e.nombre SEPARATOR ', ') as ejercicios
             FROM Registro_Progreso rp
             LEFT JOIN Rutinas r ON rp.rutina_id = r.id
             LEFT JOIN Ejercicios e ON rp.ejercicio_id = e.id
+            -- NUEVO JOIN: Cruzamos con la plantilla para saber el "Día"
+            LEFT JOIN Rutina_Ejercicios re ON rp.rutina_id = re.rutina_id AND rp.ejercicio_id = re.ejercicio_id
             WHERE rp.cliente_id = ?
-            GROUP BY DATE(rp.fecha), rp.rutina_id, r.nombre 
+            GROUP BY DATE(rp.fecha), rp.rutina_id, r.nombre, re.dia_nombre -- AÑADIDO: Agrupamos por el Día
             ORDER BY dia_entrenamiento DESC
-            LIMIT 10
+            LIMIT 15
         `;
         const [resultados] = await db.query(query, [req.params.cliente_id]);
         res.json(resultados);
@@ -48,7 +51,6 @@ router.get('/global/:cliente_id', verificarUsuario, verificarPropiedadCliente, a
         res.status(500).json({ error: err.message });
     }
 });
-
 // ==========================================
 // 3. OBTENER FEEDBACK Y NOTAS DEL CLIENTE
 // ==========================================
