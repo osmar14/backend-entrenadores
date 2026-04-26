@@ -190,7 +190,7 @@ router.get('/historial-mes/:cliente_id', verificarUsuario, verificarPropiedadCli
         // Subquery escalar para resolver dia_nombre sin multiplicar filas
         const query = `
             SELECT 
-                DATE(rp.fecha) AS dia_entrenamiento,
+                DATE_FORMAT(rp.fecha, '%Y-%m-%d') AS dia_entrenamiento,
                 rp.rutina_id,
                 r.nombre AS rutina_nombre,
                 (SELECT re2.dia_nombre FROM Rutina_Ejercicios re2 

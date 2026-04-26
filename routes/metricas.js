@@ -124,9 +124,9 @@ router.get('/adherencia/:cliente_id', verificarUsuario, verificarPropiedadClient
     try {
         const clienteId = req.params.cliente_id;
         
-        // 1. Obtener la rutina activa del cliente
+        // 1. Obtener la rutina activa del cliente (Usamos id DESC que es más seguro que fecha_creacion)
         const [rutinaActiva] = await db.query(
-            'SELECT id, fecha_creacion FROM Rutinas WHERE cliente_id = ? ORDER BY fecha_creacion DESC LIMIT 1',
+            'SELECT id FROM Rutinas WHERE cliente_id = ? ORDER BY id DESC LIMIT 1',
             [clienteId]
         );
         
@@ -175,7 +175,7 @@ router.get('/adherencia/:cliente_id', verificarUsuario, verificarPropiedadClient
                 COUNT(DISTINCT ejercicio_id) AS completados
              FROM Registro_Progreso 
              WHERE cliente_id = ? AND fecha >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
-             GROUP BY DATE(fecha)
+             GROUP BY DATE_FORMAT(fecha, '%Y-%m-%d')
              ORDER BY dia ASC`,
             [clienteId]
         );
