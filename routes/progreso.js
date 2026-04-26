@@ -111,4 +111,108 @@ router.post('/', verificarUsuario, async (req, res) => {
     }
 });
 
+// ==========================================
+// 5. ÚLTIMOS ENTRENAMIENTOS POR DÍA DE RUTINA
+// ==========================================
+router.get('/ultimos-por-dia/:cliente_id/:rutina_id', verificarUsuario, verificarPropiedadCliente, async (req, res) => {
+    try {
+        // Para cada dia_nombre de la rutina, traer la fecha más reciente que se entrenó
+        // y luego los registros de esa fecha+día
+        const query = `
+            SELECT 
+                sub.dia_nombre,
+                sub.ultima_fecha,
+                rp.ejercicio_id,
+                e.nombre AS ejercicio_nombre,
+                rp.serie_numero,
+                rp.peso_kg,
+                rp.repeticiones,
+                rp.rir,
+                rp.tipo_serie
+            FROM (
+                SELECT 
+                    re.dia_nombre,
+                    MAX(DATE(rp2.fecha)) AS ultima_fecha
+                FROM Rutina_Ejercicios re
+                JOIN Registro_Progreso rp2 ON rp2.ejercicio_id = re.ejercicio_id 
+                    AND rp2.rutina_id = re.rutina_id 
+                    AND rp2.cliente_id = ?
+                WHERE re.rutina_id = ?
+                GROUP BY re.dia_nombre
+            ) sub
+            JOIN Rutina_Ejercicios re2 ON re2.rutina_id = ? AND re2.dia_nombre = sub.dia_nombre
+            JOIN Registro_Progreso rp ON rp.ejercicio_id = re2.ejercicio_id 
+                AND rp.rutina_id = ? 
+                AND rp.cliente_id = ? 
+                AND DATE(rp.fecha) = sub.ultima_fecha
+            JOIN Ejercicios e ON rp.ejercicio_id = e.id
+            ORDER BY sub.dia_nombre, e.nombre, rp.serie_numero
+        `;
+        const clienteId = req.params.cliente_id;
+        const rutinaId = req.params.rutina_id;
+        const [resultados] = await db.query(query, [clienteId, rutinaId, rutinaId, rutinaId, clienteId]);
+        
+        // Agrupar por dia_nombre para facilitar el consumo en el frontend
+        const agrupado = {};
+        resultados.forEach(r => {
+            if (!agrupado[r.dia_nombre]) {
+                agrupado[r.dia_nombre] = { dia_nombre: r.dia_nombre, ultima_fecha: r.ultima_fecha, ejercicios: {} };
+            }
+            if (!agrupado[r.dia_nombre].ejercicios[r.ejercicio_nombre]) {
+                agrupado[r.dia_nombre].ejercicios[r.ejercicio_nombre] = { nombre: r.ejercicio_nombre, ejercicio_id: r.ejercicio_id, series: [] };
+            }
+            agrupado[r.dia_nombre].ejercicios[r.ejercicio_nombre].series.push({
+                serie_numero: r.serie_numero,
+                peso_kg: r.peso_kg,
+                repeticiones: r.repeticiones,
+                rir: r.rir,
+                tipo_serie: r.tipo_serie
+            });
+        });
+
+        // Convertir objetos a arrays para el frontend
+        const resultado = Object.values(agrupado).map(dia => ({
+            ...dia,
+            ejercicios: Object.values(dia.ejercicios)
+        }));
+
+        res.json(resultado);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ==========================================
+// 6. HISTORIAL COMPLETO DEL ÚLTIMO MES
+// ==========================================
+router.get('/historial-mes/:cliente_id', verificarUsuario, verificarPropiedadCliente, async (req, res) => {
+    try {
+        const query = `
+            SELECT 
+                DATE(rp.fecha) AS dia_entrenamiento,
+                rp.rutina_id,
+                r.nombre AS rutina_nombre,
+                re.dia_nombre,
+                rp.ejercicio_id,
+                e.nombre AS ejercicio_nombre,
+                rp.serie_numero,
+                rp.peso_kg,
+                rp.repeticiones,
+                rp.rir,
+                rp.tipo_serie,
+                rp.notas_cliente
+            FROM Registro_Progreso rp
+            LEFT JOIN Rutinas r ON rp.rutina_id = r.id
+            LEFT JOIN Ejercicios e ON rp.ejercicio_id = e.id
+            LEFT JOIN Rutina_Ejercicios re ON rp.rutina_id = re.rutina_id AND rp.ejercicio_id = re.ejercicio_id
+            WHERE rp.cliente_id = ? AND rp.fecha >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+            ORDER BY rp.fecha DESC, re.dia_nombre, e.nombre, rp.serie_numero
+        `;
+        const [resultados] = await db.query(query, [req.params.cliente_id]);
+        res.json(resultados);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 module.exports = router;
