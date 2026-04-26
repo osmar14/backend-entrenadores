@@ -187,12 +187,15 @@ router.get('/ultimos-por-dia/:cliente_id/:rutina_id', verificarUsuario, verifica
 // ==========================================
 router.get('/historial-mes/:cliente_id', verificarUsuario, verificarPropiedadCliente, async (req, res) => {
     try {
+        // Subquery escalar para resolver dia_nombre sin multiplicar filas
         const query = `
             SELECT 
                 DATE(rp.fecha) AS dia_entrenamiento,
                 rp.rutina_id,
                 r.nombre AS rutina_nombre,
-                re.dia_nombre,
+                (SELECT re2.dia_nombre FROM Rutina_Ejercicios re2 
+                 WHERE re2.rutina_id = rp.rutina_id AND re2.ejercicio_id = rp.ejercicio_id 
+                 LIMIT 1) AS dia_nombre,
                 rp.ejercicio_id,
                 e.nombre AS ejercicio_nombre,
                 rp.serie_numero,
@@ -204,9 +207,8 @@ router.get('/historial-mes/:cliente_id', verificarUsuario, verificarPropiedadCli
             FROM Registro_Progreso rp
             LEFT JOIN Rutinas r ON rp.rutina_id = r.id
             LEFT JOIN Ejercicios e ON rp.ejercicio_id = e.id
-            LEFT JOIN Rutina_Ejercicios re ON rp.rutina_id = re.rutina_id AND rp.ejercicio_id = re.ejercicio_id
             WHERE rp.cliente_id = ? AND rp.fecha >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
-            ORDER BY rp.fecha DESC, re.dia_nombre, e.nombre, rp.serie_numero
+            ORDER BY rp.fecha DESC, dia_nombre, e.nombre, rp.serie_numero
         `;
         const [resultados] = await db.query(query, [req.params.cliente_id]);
         res.json(resultados);

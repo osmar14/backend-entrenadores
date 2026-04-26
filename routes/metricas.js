@@ -122,14 +122,53 @@ router.get('/volumen-carga-total/:cliente_id', verificarUsuario, verificarPropie
 // ==========================================
 router.get('/adherencia/:cliente_id', verificarUsuario, verificarPropiedadCliente, async (req, res) => {
     try {
-        // 1. Obtener la fecha de la primera rutina asignada al cliente
-        const [fechaInicio] = await db.query(
-            'SELECT MIN(fecha_creacion) AS inicio FROM Rutinas WHERE cliente_id = ?',
-            [req.params.cliente_id]
+        const clienteId = req.params.cliente_id;
+        
+        // 1. Obtener la rutina activa del cliente
+        const [rutinaActiva] = await db.query(
+            'SELECT id, fecha_creacion FROM Rutinas WHERE cliente_id = ? ORDER BY fecha_creacion DESC LIMIT 1',
+            [clienteId]
         );
-        const inicio = fechaInicio[0]?.inicio || new Date();
+        
+        let diasRutinaCount = 0;
+        let promedioEjerciciosPorDia = 0;
+        let expectedDaysOfWeek = [];
+        
+        if (rutinaActiva.length > 0) {
+            const rutinaId = rutinaActiva[0].id;
+            const [ejerciciosRutina] = await db.query(
+                'SELECT dia_nombre, COUNT(DISTINCT ejercicio_id) as total FROM Rutina_Ejercicios WHERE rutina_id = ? GROUP BY dia_nombre',
+                [rutinaId]
+            );
+            
+            diasRutinaCount = ejerciciosRutina.length;
+            const totalEjercicios = ejerciciosRutina.reduce((sum, r) => sum + r.total, 0);
+            promedioEjerciciosPorDia = diasRutinaCount > 0 ? (totalEjercicios / diasRutinaCount) : 0;
+        }
 
-        // 2. Obtener todos los días distintos que el cliente registró progreso (últimos 90 días)
+        // Lógica de días de entrenamiento esperados (0 = Domingo, 1 = Lunes, etc.)
+        if (diasRutinaCount === 1) expectedDaysOfWeek = [1];
+        else if (diasRutinaCount === 2) expectedDaysOfWeek = [1, 4];
+        else if (diasRutinaCount === 3) expectedDaysOfWeek = [1, 3, 5];
+        else if (diasRutinaCount === 4) expectedDaysOfWeek = [1, 2, 4, 5];
+        else if (diasRutinaCount === 5) expectedDaysOfWeek = [1, 2, 3, 4, 5];
+        else if (diasRutinaCount === 6) expectedDaysOfWeek = [1, 2, 3, 4, 5, 6];
+        else if (diasRutinaCount >= 7) expectedDaysOfWeek = [0, 1, 2, 3, 4, 5, 6];
+
+        // Si no hay rutina activa, por defecto tomar 3 días
+        if (diasRutinaCount === 0) {
+            expectedDaysOfWeek = [1, 3, 5];
+            promedioEjerciciosPorDia = 5; // Valor por defecto
+        }
+
+        // 2. Obtener la fecha de la primera rutina asignada al cliente
+        const [fechaInicioQuery] = await db.query(
+            'SELECT MIN(fecha_creacion) AS inicio FROM Rutinas WHERE cliente_id = ?',
+            [clienteId]
+        );
+        const inicio = fechaInicioQuery[0]?.inicio || new Date();
+
+        // 3. Obtener todos los días distintos que el cliente registró progreso (últimos 90 días)
         const [diasEntrenados] = await db.query(
             `SELECT 
                 DATE_FORMAT(fecha, '%Y-%m-%d') AS dia,
@@ -138,25 +177,62 @@ router.get('/adherencia/:cliente_id', verificarUsuario, verificarPropiedadClient
              WHERE cliente_id = ? AND fecha >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
              GROUP BY DATE(fecha)
              ORDER BY dia ASC`,
-            [req.params.cliente_id]
+            [clienteId]
         );
 
-        // 3. Calcular total de días desde inicio hasta hoy (máx 90)
+        const mapDiasEntrenados = {};
+        diasEntrenados.forEach(d => {
+            mapDiasEntrenados[d.dia] = d.completados;
+        });
+
+        // 4. Generar mapa de los últimos 90 días con sus colores correspondientes
         const hoy = new Date();
-        const fechaInicioDate = new Date(inicio);
-        const diffMs = hoy - fechaInicioDate;
-        const diasTotales = Math.min(Math.ceil(diffMs / (1000 * 60 * 60 * 24)), 90);
-        const diasActivosCount = diasEntrenados.length;
-        const porcentaje = diasTotales > 0 ? Math.round((diasActivosCount / diasTotales) * 100) : 0;
+        const fechasActivas = [];
+        let diasCompletados = 0;
+        let diasTotalesEsperados = 0;
+
+        for (let i = 89; i >= 0; i--) {
+            const d = new Date(hoy);
+            d.setDate(d.getDate() - i);
+            const diaString = d.toISOString().split('T')[0];
+            const diaSemana = d.getDay();
+            
+            // Verificamos si la fecha actual es >= a la fecha de inicio del cliente
+            const isAfterStart = d >= new Date(inicio).setHours(0,0,0,0);
+            const isExpected = expectedDaysOfWeek.includes(diaSemana) && isAfterStart;
+            
+            const completados = mapDiasEntrenados[diaString] || 0;
+            let estado = 'rest'; // Gris por defecto (descanso)
+
+            if (completados > 0) {
+                // Entrenó algo
+                const porcentaje = promedioEjerciciosPorDia > 0 ? (completados / promedioEjerciciosPorDia) : 1;
+                if (porcentaje >= 0.8) {
+                    estado = 'completo'; // Verde
+                    diasCompletados++;
+                } else {
+                    estado = 'incompleto'; // Amarillo
+                }
+                diasTotalesEsperados++; // Si entrenó en un día no esperado, igual suma al total de esfuerzo
+            } else {
+                // No entrenó
+                if (isExpected) {
+                    estado = 'missed'; // Rojo (debía entrenar y no lo hizo)
+                    diasTotalesEsperados++;
+                }
+            }
+            
+            fechasActivas.push({ fecha: diaString, estado });
+        }
+
+        const porcentajeFinal = diasTotalesEsperados > 0 ? Math.round((diasCompletados / diasTotalesEsperados) * 100) : 0;
 
         res.json({
-            porcentaje_adherencia: porcentaje,
-            dias_entrenados: diasActivosCount,
-            dias_totales: diasTotales,
-            fechas_activas: diasEntrenados.map(d => ({
-                fecha: d.dia,
-                estado: d.completados >= 3 ? 'completo' : 'incompleto'
-            }))
+            porcentaje_adherencia: porcentajeFinal,
+            dias_entrenados: diasCompletados,
+            dias_totales: diasTotalesEsperados,
+            fechas_activas: fechasActivas,
+            rutina_activa_id: rutinaActiva.length > 0 ? rutinaActiva[0].id : null
         });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
