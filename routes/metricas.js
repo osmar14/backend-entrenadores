@@ -131,9 +131,12 @@ router.get('/adherencia/:cliente_id', verificarUsuario, verificarPropiedadClient
 
         // 2. Obtener todos los días distintos que el cliente registró progreso (últimos 90 días)
         const [diasEntrenados] = await db.query(
-            `SELECT DISTINCT DATE_FORMAT(fecha, '%Y-%m-%d') AS dia 
+            `SELECT 
+                DATE_FORMAT(fecha, '%Y-%m-%d') AS dia,
+                COUNT(DISTINCT ejercicio_id) AS completados
              FROM Registro_Progreso 
              WHERE cliente_id = ? AND fecha >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
+             GROUP BY DATE(fecha)
              ORDER BY dia ASC`,
             [req.params.cliente_id]
         );
@@ -150,7 +153,10 @@ router.get('/adherencia/:cliente_id', verificarUsuario, verificarPropiedadClient
             porcentaje_adherencia: porcentaje,
             dias_entrenados: diasActivosCount,
             dias_totales: diasTotales,
-            fechas_activas: diasEntrenados.map(d => d.dia)
+            fechas_activas: diasEntrenados.map(d => ({
+                fecha: d.dia,
+                estado: d.completados >= 3 ? 'completo' : 'incompleto'
+            }))
         });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
