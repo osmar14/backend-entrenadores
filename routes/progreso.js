@@ -201,7 +201,7 @@ router.get('/historial-mes/:cliente_id', verificarUsuario, verificarPropiedadCli
                 re.dia_nombre
             FROM Registro_Progreso rp
             JOIN Ejercicios e ON rp.ejercicio_id = e.id
-            JOIN Rutina_Ejercicios re ON rp.rutina_id = re.rutina_id AND rp.ejercicio_id = re.ejercicio_id
+            LEFT JOIN Rutina_Ejercicios re ON rp.rutina_id = re.rutina_id AND rp.ejercicio_id = re.ejercicio_id
             WHERE rp.cliente_id = ? AND rp.fecha >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
             ORDER BY rp.fecha DESC, e.nombre, rp.serie_numero
         `;
