@@ -187,25 +187,21 @@ router.get('/ultimos-por-dia/:cliente_id/:rutina_id', verificarUsuario, verifica
 // ==========================================
 router.get('/historial-mes/:cliente_id', verificarUsuario, verificarPropiedadCliente, async (req, res) => {
     try {
-        // Query simple y directa — misma lógica que el endpoint de Volumen que funciona perfecto
+        // Query simplificada al máximo y usando la misma base que la función Volumen
         const query = `
             SELECT 
                 DATE_FORMAT(rp.fecha, '%Y-%m-%d') AS dia_entrenamiento,
                 rp.rutina_id,
-                r.nombre AS rutina_nombre,
                 rp.ejercicio_id,
                 e.nombre AS ejercicio_nombre,
                 rp.serie_numero,
                 rp.peso_kg,
                 rp.repeticiones,
-                rp.rir,
                 rp.tipo_serie,
-                rp.notas_cliente,
                 re.dia_nombre
             FROM Registro_Progreso rp
-            LEFT JOIN Rutinas r ON rp.rutina_id = r.id
-            LEFT JOIN Ejercicios e ON rp.ejercicio_id = e.id
-            LEFT JOIN Rutina_Ejercicios re ON rp.rutina_id = re.rutina_id AND rp.ejercicio_id = re.ejercicio_id
+            JOIN Ejercicios e ON rp.ejercicio_id = e.id
+            JOIN Rutina_Ejercicios re ON rp.rutina_id = re.rutina_id AND rp.ejercicio_id = re.ejercicio_id
             WHERE rp.cliente_id = ? AND rp.fecha >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
             ORDER BY rp.fecha DESC, e.nombre, rp.serie_numero
         `;
