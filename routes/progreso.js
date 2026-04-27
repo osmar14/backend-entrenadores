@@ -187,15 +187,23 @@ router.get('/ultimos-por-dia/:cliente_id/:rutina_id', verificarUsuario, verifica
 // ==========================================
 router.get('/historial-mes/:cliente_id', verificarUsuario, verificarPropiedadCliente, async (req, res) => {
     try {
-        // Subquery escalar para resolver dia_nombre sin multiplicar filas
+        // Subquery con fallback: primero busca dia_nombre en la rutina exacta,
+        // si no existe (ejercicio fue removido), busca en CUALQUIER rutina del cliente
         const query = `
             SELECT 
                 DATE_FORMAT(rp.fecha, '%Y-%m-%d') AS dia_entrenamiento,
                 rp.rutina_id,
                 r.nombre AS rutina_nombre,
-                (SELECT re2.dia_nombre FROM Rutina_Ejercicios re2 
-                 WHERE re2.rutina_id = rp.rutina_id AND re2.ejercicio_id = rp.ejercicio_id 
-                 LIMIT 1) AS dia_nombre,
+                COALESCE(
+                    (SELECT re2.dia_nombre FROM Rutina_Ejercicios re2 
+                     WHERE re2.rutina_id = rp.rutina_id AND re2.ejercicio_id = rp.ejercicio_id 
+                     LIMIT 1),
+                    (SELECT re3.dia_nombre FROM Rutina_Ejercicios re3 
+                     JOIN Rutinas r3 ON re3.rutina_id = r3.id
+                     WHERE r3.cliente_id = rp.cliente_id AND re3.ejercicio_id = rp.ejercicio_id 
+                     ORDER BY r3.id DESC LIMIT 1),
+                    'Sin Día'
+                ) AS dia_nombre,
                 rp.ejercicio_id,
                 e.nombre AS ejercicio_nombre,
                 rp.serie_numero,
@@ -213,6 +221,7 @@ router.get('/historial-mes/:cliente_id', verificarUsuario, verificarPropiedadCli
         const [resultados] = await db.query(query, [req.params.cliente_id]);
         res.json(resultados);
     } catch (err) {
+        console.error('🚨 Error historial-mes:', err.message);
         res.status(500).json({ error: err.message });
     }
 });

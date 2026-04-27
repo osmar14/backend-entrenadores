@@ -161,12 +161,28 @@ router.get('/adherencia/:cliente_id', verificarUsuario, verificarPropiedadClient
             promedioEjerciciosPorDia = 5; // Valor por defecto
         }
 
-        // 2. Obtener la fecha de la primera rutina asignada al cliente
-        const [fechaInicioQuery] = await db.query(
-            'SELECT MIN(fecha_creacion) AS inicio FROM Rutinas WHERE cliente_id = ?',
-            [clienteId]
-        );
-        const inicio = fechaInicioQuery[0]?.inicio || new Date();
+        // 2. Obtener la fecha de inicio: intentar fecha_creacion de Rutinas, sino usar primera fecha de progreso
+        let inicio;
+        try {
+            const [fechaInicioQuery] = await db.query(
+                'SELECT MIN(fecha_creacion) AS inicio FROM Rutinas WHERE cliente_id = ?',
+                [clienteId]
+            );
+            inicio = fechaInicioQuery[0]?.inicio ? new Date(fechaInicioQuery[0].inicio) : null;
+        } catch (colErr) {
+            // Si fecha_creacion no existe en la tabla, usar fallback
+            console.warn('⚠️ Adherencia: columna fecha_creacion no encontrada, usando fallback');
+            inicio = null;
+        }
+
+        // Fallback: usar la primera fecha de progreso del cliente
+        if (!inicio) {
+            const [fallbackFecha] = await db.query(
+                'SELECT MIN(fecha) AS inicio FROM Registro_Progreso WHERE cliente_id = ?',
+                [clienteId]
+            );
+            inicio = fallbackFecha[0]?.inicio ? new Date(fallbackFecha[0].inicio) : new Date();
+        }
 
         // 3. Obtener todos los días distintos que el cliente registró progreso (últimos 90 días)
         const [diasEntrenados] = await db.query(
@@ -191,14 +207,19 @@ router.get('/adherencia/:cliente_id', verificarUsuario, verificarPropiedadClient
         let diasCompletados = 0;
         let diasTotalesEsperados = 0;
 
+        // Normalizar fecha de inicio a medianoche para comparación segura
+        const inicioNormalizado = new Date(inicio);
+        inicioNormalizado.setHours(0, 0, 0, 0);
+
         for (let i = 89; i >= 0; i--) {
             const d = new Date(hoy);
             d.setDate(d.getDate() - i);
+            d.setHours(0, 0, 0, 0); // Normalizar también el día del loop
             const diaString = d.toISOString().split('T')[0];
             const diaSemana = d.getDay();
             
             // Verificamos si la fecha actual es >= a la fecha de inicio del cliente
-            const isAfterStart = d >= new Date(inicio).setHours(0,0,0,0);
+            const isAfterStart = d.getTime() >= inicioNormalizado.getTime();
             const isExpected = expectedDaysOfWeek.includes(diaSemana) && isAfterStart;
             
             const completados = mapDiasEntrenados[diaString] || 0;
@@ -234,7 +255,10 @@ router.get('/adherencia/:cliente_id', verificarUsuario, verificarPropiedadClient
             fechas_activas: fechasActivas,
             rutina_activa_id: rutinaActiva.length > 0 ? rutinaActiva[0].id : null
         });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) {
+        console.error('🚨 Error en adherencia:', err.message);
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // ==========================================
