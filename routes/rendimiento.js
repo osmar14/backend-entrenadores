@@ -41,16 +41,16 @@ router.get('/rutinas-dias/:cliente_id', verificarUsuario, async (req, res) => {
 // 2. Obtener las últimas 4 sesiones de un día específico de una rutina
 router.get('/sesiones-dia/:cliente_id/:rutina_id/:dia_nombre', verificarUsuario, async (req, res) => {
     try {
-        const { rutina_id, dia_nombre } = req.params;
+        const { cliente_id, rutina_id, dia_nombre } = req.params;
         
         // Paso 1: Encontrar las últimas 4 fechas distintas donde se entrenó este día
         const [fechasRows] = await db.query(`
             SELECT DISTINCT DATE(rp.fecha) as fecha_corta
             FROM Registro_Progreso rp
             JOIN Rutina_Ejercicios re ON re.rutina_id = rp.rutina_id AND re.ejercicio_id = rp.ejercicio_id
-            WHERE rp.rutina_id = ? AND re.dia_nombre = ?
+            WHERE rp.cliente_id = ? AND rp.rutina_id = ? AND re.dia_nombre = ?
             ORDER BY fecha_corta DESC LIMIT 4
-        `, [rutina_id, dia_nombre]);
+        `, [cliente_id, rutina_id, dia_nombre]);
 
         if (fechasRows.length === 0) {
             return res.json([]);
@@ -64,9 +64,9 @@ router.get('/sesiones-dia/:cliente_id/:rutina_id/:dia_nombre', verificarUsuario,
             FROM Registro_Progreso rp
             JOIN Ejercicios e ON rp.ejercicio_id = e.id
             JOIN Rutina_Ejercicios re ON re.rutina_id = rp.rutina_id AND re.ejercicio_id = rp.ejercicio_id
-            WHERE rp.rutina_id = ? AND re.dia_nombre = ? AND DATE(rp.fecha) IN (?)
+            WHERE rp.cliente_id = ? AND rp.rutina_id = ? AND re.dia_nombre = ? AND DATE(rp.fecha) IN (?)
             ORDER BY fecha_corta DESC, e.nombre ASC, rp.serie_numero ASC
-        `, [rutina_id, dia_nombre, fechas]);
+        `, [cliente_id, rutina_id, dia_nombre, fechas]);
 
         // Paso 3: Agrupar por fecha -> ejercicio
         const porFecha = {};
@@ -102,8 +102,8 @@ router.get('/progreso-ejercicio/:cliente_id/:ejercicio_id', verificarUsuario, as
         const query = `
             SELECT rp.fecha, rp.peso_kg, rp.repeticiones
             FROM Registro_Progreso rp
-            JOIN Rutinas r ON rp.rutina_id = r.id
-            WHERE r.cliente_id = ? AND rp.ejercicio_id = ?
+            JOIN Ejercicios e ON rp.ejercicio_id = e.id
+            WHERE rp.cliente_id = ? AND rp.ejercicio_id = ? AND rp.repeticiones > 0
             ORDER BY rp.fecha ASC
         `;
         const [registros] = await db.query(query, [cliente_id, ejercicio_id]);
