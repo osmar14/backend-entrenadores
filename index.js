@@ -71,6 +71,7 @@ app.use('/api/notas', require('./routes/notas'));
 app.use('/api/progreso', require('./routes/progreso'));
 app.use('/api/fotos', require('./routes/fotos'));
 app.use('/api/entrenadores', require('./routes/entrenadores'));
+app.use('/api/rendimiento', require('./routes/rendimiento'));
 app.use('/api', require('./routes/stripe')); // Rutas /api/crear-sesion-pago y /api/portal-suscripcion
 
 // Inicializar sockets
