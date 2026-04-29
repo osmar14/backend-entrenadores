@@ -51,6 +51,14 @@ const construirTablas = `
         orden INT,
         series_objetivo INT,
         reps_objetivo VARCHAR(50),
+        rir_objetivo VARCHAR(50),
+        notas_entrenador TEXT,
+        dia_nombre VARCHAR(50),
+        grupo_superserie INT DEFAULT NULL,
+        tempo VARCHAR(50) DEFAULT NULL,
+        es_unilateral BOOLEAN DEFAULT FALSE,
+        segundos_objetivo INT DEFAULT NULL,
+        tipos_series VARCHAR(255) DEFAULT 'Efectiva',
         FOREIGN KEY (rutina_id) REFERENCES Rutinas(id) ON DELETE CASCADE,
         FOREIGN KEY (ejercicio_id) REFERENCES Ejercicios(id) ON DELETE CASCADE
     );

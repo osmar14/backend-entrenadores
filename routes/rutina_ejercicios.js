@@ -53,12 +53,13 @@ router.post('/', verificarUsuario, async (req, res) => {
                 ej.dia_nombre || 'Día 1',
                 ej.tempo || null,
                 ej.es_unilateral ? 1 : 0,
-                ej.segundos_objetivo || null
+                ej.segundos_objetivo || null,
+                ej.tipos_series || 'Efectiva'
             ]);
 
             const insertQuery = `
                 INSERT INTO Rutina_Ejercicios 
-                (rutina_id, ejercicio_id, orden, series_objetivo, reps_objetivo, rir_objetivo, notas_entrenador, dia_nombre, tempo, es_unilateral, segundos_objetivo) 
+                (rutina_id, ejercicio_id, orden, series_objetivo, reps_objetivo, rir_objetivo, notas_entrenador, dia_nombre, tempo, es_unilateral, segundos_objetivo, tipos_series) 
                 VALUES ?
             `;
             await db.query(insertQuery, [values]);

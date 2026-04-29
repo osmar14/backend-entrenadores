@@ -44,7 +44,7 @@ router.post('/clonar', verificarUsuario, async (req, res) => {
     try {
         const [resultRutina] = await db.query(`INSERT INTO Rutinas (nombre, descripcion, nivel, es_plantilla, cliente_id, entrenador_id) SELECT nombre, descripcion, nivel, 0, ?, entrenador_id FROM Rutinas WHERE id = ?`, [cliente_id, plantilla_id]);
         const nuevaRutinaId = resultRutina.insertId;
-        await db.query(`INSERT INTO Rutina_Ejercicios (rutina_id, ejercicio_id, series_objetivo, reps_objetivo, rir_objetivo, notas_entrenador, dia_nombre, orden, grupo_superserie, tempo, es_unilateral, segundos_objetivo) SELECT ?, ejercicio_id, series_objetivo, reps_objetivo, rir_objetivo, notas_entrenador, dia_nombre, orden, grupo_superserie, tempo, es_unilateral, segundos_objetivo FROM Rutina_Ejercicios WHERE rutina_id = ?`, [nuevaRutinaId, plantilla_id]);
+        await db.query(`INSERT INTO Rutina_Ejercicios (rutina_id, ejercicio_id, series_objetivo, reps_objetivo, rir_objetivo, notas_entrenador, dia_nombre, orden, grupo_superserie, tempo, es_unilateral, segundos_objetivo, tipos_series) SELECT ?, ejercicio_id, series_objetivo, reps_objetivo, rir_objetivo, notas_entrenador, dia_nombre, orden, grupo_superserie, tempo, es_unilateral, segundos_objetivo, tipos_series FROM Rutina_Ejercicios WHERE rutina_id = ?`, [nuevaRutinaId, plantilla_id]);
         res.status(201).json({ message: 'Rutina clonada', nuevaRutinaId });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -58,7 +58,7 @@ router.post('/clonar-masivo', verificarUsuario, async (req, res) => {
         for (const c_id of cliente_ids) {
             const [resultRutina] = await db.query(`INSERT INTO Rutinas (nombre, descripcion, nivel, es_plantilla, cliente_id, entrenador_id) SELECT nombre, descripcion, nivel, 0, ?, entrenador_id FROM Rutinas WHERE id = ?`, [c_id, plantilla_id]);
             const nuevaRutinaId = resultRutina.insertId;
-            await db.query(`INSERT INTO Rutina_Ejercicios (rutina_id, ejercicio_id, series_objetivo, reps_objetivo, rir_objetivo, notas_entrenador, dia_nombre, orden, grupo_superserie, tempo, es_unilateral, segundos_objetivo) SELECT ?, ejercicio_id, series_objetivo, reps_objetivo, rir_objetivo, notas_entrenador, dia_nombre, orden, grupo_superserie, tempo, es_unilateral, segundos_objetivo FROM Rutina_Ejercicios WHERE rutina_id = ?`, [nuevaRutinaId, plantilla_id]);
+            await db.query(`INSERT INTO Rutina_Ejercicios (rutina_id, ejercicio_id, series_objetivo, reps_objetivo, rir_objetivo, notas_entrenador, dia_nombre, orden, grupo_superserie, tempo, es_unilateral, segundos_objetivo, tipos_series) SELECT ?, ejercicio_id, series_objetivo, reps_objetivo, rir_objetivo, notas_entrenador, dia_nombre, orden, grupo_superserie, tempo, es_unilateral, segundos_objetivo, tipos_series FROM Rutina_Ejercicios WHERE rutina_id = ?`, [nuevaRutinaId, plantilla_id]);
         }
         res.status(201).json({ message: 'Rutinas clonadas masivamente' });
     } catch (err) { res.status(500).json({ error: err.message }); }

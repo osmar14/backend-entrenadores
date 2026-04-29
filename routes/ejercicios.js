@@ -86,10 +86,11 @@ router.post('/rutina', verificarUsuario, async (req, res) => {
             e.grupo_superserie || null,
             esPro ? (e.tempo || null) : null,
             esPro ? (e.es_unilateral ? 1 : 0) : 0,
-            esPro ? (e.segundos_objetivo || null) : null
+            esPro ? (e.segundos_objetivo || null) : null,
+            e.tipos_series || 'Efectiva'
         ]);
         
-        await db.query(`INSERT INTO Rutina_Ejercicios (rutina_id, ejercicio_id, series_objetivo, reps_objetivo, dia_nombre, rir_objetivo, notas_entrenador, orden, grupo_superserie, tempo, es_unilateral, segundos_objetivo) VALUES ?`, [values]);
+        await db.query(`INSERT INTO Rutina_Ejercicios (rutina_id, ejercicio_id, series_objetivo, reps_objetivo, dia_nombre, rir_objetivo, notas_entrenador, orden, grupo_superserie, tempo, es_unilateral, segundos_objetivo, tipos_series) VALUES ?`, [values]);
         res.status(201).json({ message: 'Guardados', plan: planActual });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });

@@ -60,7 +60,7 @@ router.get('/sesiones-dia/:cliente_id/:rutina_id/:dia_nombre', verificarUsuario,
 
         // Paso 2: Obtener todos los ejercicios de esas fechas
         const [sesionesRows] = await db.query(`
-            SELECT DATE(rp.fecha) as fecha_corta, rp.peso_kg, rp.repeticiones, rp.serie_numero, e.nombre as ejercicio_nombre
+            SELECT DATE(rp.fecha) as fecha_corta, rp.peso_kg, rp.repeticiones, rp.serie_numero, rp.tipo_serie, e.nombre as ejercicio_nombre
             FROM Registro_Progreso rp
             JOIN Ejercicios e ON rp.ejercicio_id = e.id
             JOIN Rutina_Ejercicios re ON re.rutina_id = rp.rutina_id AND re.ejercicio_id = rp.ejercicio_id
@@ -81,7 +81,8 @@ router.get('/sesiones-dia/:cliente_id/:rutina_id/:dia_nombre', verificarUsuario,
             porFecha[fechaStr].ejercicios[row.ejercicio_nombre].push({
                 serie: row.serie_numero,
                 peso: parseFloat(row.peso_kg),
-                reps: row.repeticiones
+                reps: row.repeticiones,
+                tipo_serie: row.tipo_serie || 'Efectiva'
             });
         });
 
