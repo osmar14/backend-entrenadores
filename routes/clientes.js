@@ -4,33 +4,43 @@ const db = require('../config/db');
 const admin = require('../config/firebase');
 const { verificarUsuario } = require('../middlewares/auth');
 
+// ==========================================
+// GET /api/clientes — OPTIMIZADO (N+1 eliminado)
+// Antes: 1 + 2N queries (101 queries para 50 clientes)
+// Ahora: 1 sola query con JOINs laterales
+// ==========================================
 router.get('/', verificarUsuario, async (req, res) => {
     if (req.rol !== 'entrenador') return res.status(403).json({ error: 'Acceso denegado' });
     try {
-        const [clientes] = await db.query('SELECT * FROM Clientes WHERE entrenador_id = ?', [req.usuarioId]);
-        
-        // Agregar Semáforo de Fatiga a cada cliente
-        for (let cliente of clientes) {
-            let semaforo = 'Verde'; // Por defecto
+        const query = `
+            SELECT c.*,
+                COALESCE(lesiones.total_lesiones, 0) AS total_lesiones,
+                COALESCE(rir_data.rir_cero, 0) AS rir_cero
+            FROM Clientes c
+            LEFT JOIN (
+                SELECT nc.cliente_id, COUNT(*) AS total_lesiones
+                FROM Notas_Clientes nc
+                WHERE nc.fecha_creacion >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+                  AND (LOWER(nc.categoria) LIKE '%lesion%' OR LOWER(nc.categoria) LIKE '%lesión%'
+                       OR LOWER(nc.mensaje) LIKE '%lesion%' OR LOWER(nc.mensaje) LIKE '%lesión%')
+                GROUP BY nc.cliente_id
+            ) lesiones ON lesiones.cliente_id = c.id
+            LEFT JOIN (
+                SELECT rp.cliente_id, COUNT(*) AS rir_cero
+                FROM Registro_Progreso rp
+                WHERE (rp.rir = '0' OR rp.rir = 0)
+                  AND rp.fecha >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+                GROUP BY rp.cliente_id
+            ) rir_data ON rir_data.cliente_id = c.id
+            WHERE c.entrenador_id = ?
+        `;
+        const [clientes] = await db.query(query, [req.usuarioId]);
 
-            // 1. Verificar si hay notas recientes de lesión (últimos 7 días)
-            const [notas] = await db.query(`
-                SELECT COUNT(*) as total_lesiones 
-                FROM Notas_Clientes 
-                WHERE cliente_id = ? AND fecha_creacion >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
-                AND (LOWER(categoria) LIKE '%lesion%' OR LOWER(categoria) LIKE '%lesión%' 
-                     OR LOWER(mensaje) LIKE '%lesion%' OR LOWER(mensaje) LIKE '%lesión%')
-            `, [cliente.id]);
-
-            // 2. Verificar cuántos RIR = 0 o '0' tiene en los últimos 7 días
-            const [progreso] = await db.query(`
-                SELECT COUNT(*) as rir_cero 
-                FROM Registro_Progreso 
-                WHERE cliente_id = ? AND (rir = '0' OR rir = 0) AND fecha >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
-            `, [cliente.id]);
-
-            const tieneLesion = notas[0].total_lesiones > 0;
-            const cantidadRirCero = progreso[0].rir_cero;
+        // Calcular semáforo en JS (ya tenemos los datos precalculados)
+        const clientesConSemaforo = clientes.map(cliente => {
+            let semaforo = 'Verde';
+            const tieneLesion = cliente.total_lesiones > 0;
+            const cantidadRirCero = cliente.rir_cero;
 
             if (tieneLesion || cantidadRirCero >= 4) {
                 semaforo = 'Rojo';
@@ -38,10 +48,10 @@ router.get('/', verificarUsuario, async (req, res) => {
                 semaforo = 'Amarillo';
             }
 
-            cliente.semaforo = semaforo;
-        }
+            return { ...cliente, semaforo };
+        });
 
-        res.json(clientes);
+        res.json(clientesConSemaforo);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -50,6 +60,7 @@ router.post('/', verificarUsuario, async (req, res) => {
     
     const { nombre, email, objetivo, dias_entrenamiento } = req.body;
     if (!email) return res.status(400).json({ error: 'El correo es obligatorio' });
+    if (!nombre || nombre.trim().length === 0) return res.status(400).json({ error: 'El nombre es obligatorio' });
 
     try {
         const [entrenadorData] = await db.query('SELECT plan_actual FROM Entrenadores WHERE id = ?', [req.usuarioId]);

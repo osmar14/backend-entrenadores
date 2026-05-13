@@ -5,7 +5,13 @@ const db = mysql.createPool({
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME,
-  port: process.env.DB_PORT || 14373 
+  port: process.env.DB_PORT || 14373,
+  // Pool optimizado para Railway
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0,
+  enableKeepAlive: true,
+  keepAliveInitialDelay: 30000
 });
 
 module.exports = db;

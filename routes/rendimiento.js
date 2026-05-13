@@ -3,6 +3,19 @@ const router = express.Router();
 const db = require('../config/db');
 const { verificarUsuario } = require('../middlewares/auth');
 
+/**
+ * Calcula el 1RM estimado usando la fórmula de Epley.
+ * @param {number} peso - Peso en kg (debe ser > 0)
+ * @param {number} reps - Repeticiones realizadas (debe ser >= 1)
+ * @returns {number} 1RM estimado, o 0 si inputs inválidos
+ */
+function calcular1RM(peso, reps) {
+    if (!Number.isFinite(peso) || !Number.isFinite(reps)) return 0;
+    if (peso <= 0 || reps < 1) return 0;
+    if (reps === 1) return peso;
+    return peso * (1 + reps / 30);
+}
+
 // 1. Obtener rutinas y sus días asignados
 router.get('/rutinas-dias/:cliente_id', verificarUsuario, async (req, res) => {
     try {
@@ -104,8 +117,9 @@ router.get('/progreso-ejercicio/:cliente_id/:ejercicio_id', verificarUsuario, as
             SELECT rp.fecha, rp.peso_kg, rp.repeticiones
             FROM Registro_Progreso rp
             JOIN Ejercicios e ON rp.ejercicio_id = e.id
-            WHERE rp.cliente_id = ? AND rp.ejercicio_id = ? AND rp.repeticiones > 0
+            WHERE rp.cliente_id = ? AND rp.ejercicio_id = ? AND rp.repeticiones > 0 AND rp.peso_kg > 0
             ORDER BY rp.fecha ASC
+            LIMIT 2000
         `;
         const [registros] = await db.query(query, [cliente_id, ejercicio_id]);
 
@@ -116,7 +130,7 @@ router.get('/progreso-ejercicio/:cliente_id/:ejercicio_id', verificarUsuario, as
             const fechaCorta = new Date(row.fecha).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
             const peso = parseFloat(row.peso_kg);
             const reps = parseInt(row.repeticiones);
-            const rmEst = peso * (1 + reps / 30); // Fórmula Brzycki aproximada
+            const rmEst = calcular1RM(peso, reps); // Fórmula Epley con edge cases manejados
             const volumenSerie = peso * reps;
 
             if (!progresoPorFecha[fechaCorta]) {

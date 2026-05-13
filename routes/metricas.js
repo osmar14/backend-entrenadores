@@ -3,6 +3,23 @@ const router = express.Router();
 const db = require('../config/db');
 const { verificarUsuario, verificarPropiedadCliente } = require('../middlewares/auth');
 
+// ==========================================
+// UTILIDAD: Cálculo de 1RM (Fórmula Epley)
+// ==========================================
+/**
+ * Calcula el 1RM estimado usando la fórmula de Epley.
+ * @param {number} peso - Peso en kg (debe ser > 0)
+ * @param {number} reps - Repeticiones realizadas (debe ser >= 1)
+ * @returns {number} 1RM estimado redondeado a 2 decimales, o 0 si inputs inválidos
+ */
+function calcular1RM(peso, reps) {
+    if (!Number.isFinite(peso) || !Number.isFinite(reps)) return 0;
+    if (peso <= 0 || reps < 1) return 0;
+    if (reps === 1) return parseFloat(peso.toFixed(2));
+    // Fórmula Epley: peso × (1 + reps/30)
+    return parseFloat((peso * (1 + reps / 30)).toFixed(2));
+}
+
 router.get('/volumen/:cliente_id', verificarUsuario, verificarPropiedadCliente, async (req, res) => {
     try {
         const query = `
@@ -75,17 +92,27 @@ router.get('/comparativa/:cliente_id', verificarUsuario, verificarPropiedadClien
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ==========================================
+// 1RM — Usando función utilitaria tipada
+// ==========================================
 router.get('/1rm/:cliente_id/:ejercicio_id', verificarUsuario, verificarPropiedadCliente, async (req, res) => {
     try {
         const query = `
-            SELECT fecha, peso_kg, repeticiones, 
-                   ROUND(peso_kg * (1 + (repeticiones / 30)), 2) AS estimado_1rm
+            SELECT fecha, peso_kg, repeticiones
             FROM Registro_Progreso 
-            WHERE cliente_id = ? AND ejercicio_id = ? AND repeticiones > 0
+            WHERE cliente_id = ? AND ejercicio_id = ? AND repeticiones > 0 AND peso_kg > 0
             ORDER BY fecha ASC
+            LIMIT 500
         `;
         const [resultados] = await db.query(query, [req.params.cliente_id, req.params.ejercicio_id]);
-        res.json(resultados);
+        
+        // Calcular 1RM con la función utilitaria (maneja edge cases)
+        const resultadosConRM = resultados.map(r => ({
+            ...r,
+            estimado_1rm: calcular1RM(parseFloat(r.peso_kg), parseInt(r.repeticiones))
+        }));
+        
+        res.json(resultadosConRM);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -161,7 +188,7 @@ router.get('/adherencia/:cliente_id', verificarUsuario, verificarPropiedadClient
             promedioEjerciciosPorDia = 5; // Valor por defecto
         }
 
-        // 2. Obtener la fecha de inicio: intentar fecha_creacion de Rutinas, sino usar primera fecha de progreso
+        // 2. Obtener la fecha de inicio
         let inicio;
         try {
             const [fechaInicioQuery] = await db.query(
@@ -170,7 +197,6 @@ router.get('/adherencia/:cliente_id', verificarUsuario, verificarPropiedadClient
             );
             inicio = fechaInicioQuery[0]?.inicio ? new Date(fechaInicioQuery[0].inicio) : null;
         } catch (colErr) {
-            // Si fecha_creacion no existe en la tabla, usar fallback
             console.warn('⚠️ Adherencia: columna fecha_creacion no encontrada, usando fallback');
             inicio = null;
         }
@@ -214,11 +240,10 @@ router.get('/adherencia/:cliente_id', verificarUsuario, verificarPropiedadClient
         for (let i = 89; i >= 0; i--) {
             const d = new Date(hoy);
             d.setDate(d.getDate() - i);
-            d.setHours(0, 0, 0, 0); // Normalizar también el día del loop
+            d.setHours(0, 0, 0, 0);
             const diaString = d.toISOString().split('T')[0];
             const diaSemana = d.getDay();
             
-            // Verificamos si la fecha actual es >= a la fecha de inicio del cliente
             const isAfterStart = d.getTime() >= inicioNormalizado.getTime();
             const isExpected = expectedDaysOfWeek.includes(diaSemana) && isAfterStart;
             
@@ -226,7 +251,6 @@ router.get('/adherencia/:cliente_id', verificarUsuario, verificarPropiedadClient
             let estado = 'rest'; // Gris por defecto (descanso)
 
             if (completados > 0) {
-                // Entrenó algo
                 const porcentaje = promedioEjerciciosPorDia > 0 ? (completados / promedioEjerciciosPorDia) : 1;
                 if (porcentaje >= 0.8) {
                     estado = 'completo'; // Verde
@@ -234,11 +258,10 @@ router.get('/adherencia/:cliente_id', verificarUsuario, verificarPropiedadClient
                 } else {
                     estado = 'incompleto'; // Amarillo
                 }
-                diasTotalesEsperados++; // Si entrenó en un día no esperado, igual suma al total de esfuerzo
+                diasTotalesEsperados++;
             } else {
-                // No entrenó
                 if (isExpected) {
-                    estado = 'missed'; // Rojo (debía entrenar y no lo hizo)
+                    estado = 'missed'; // Rojo
                     diasTotalesEsperados++;
                 }
             }
@@ -266,9 +289,13 @@ router.get('/adherencia/:cliente_id', verificarUsuario, verificarPropiedadClient
 // ==========================================
 router.post('/readiness', verificarUsuario, async (req, res) => {
     const { cliente_id, sueno, estres, dolor_muscular } = req.body;
-    if (!cliente_id || sueno == null || estres == null || dolor_muscular == null) {
-        return res.status(400).json({ error: 'Se requieren: cliente_id, sueno, estres, dolor_muscular (1-5)' });
+    
+    // Validación estricta de rango 1-5
+    const inRange = (v) => Number.isInteger(v) && v >= 1 && v <= 5;
+    if (!cliente_id || !inRange(sueno) || !inRange(estres) || !inRange(dolor_muscular)) {
+        return res.status(400).json({ error: 'Se requieren: cliente_id, sueno, estres, dolor_muscular (enteros entre 1 y 5)' });
     }
+    
     try {
         await db.query(
             `INSERT INTO Cuestionario_Readiness (cliente_id, sueno, estres, dolor_muscular, fecha) 
@@ -291,7 +318,7 @@ router.get('/readiness/:cliente_id', verificarUsuario, verificarPropiedadCliente
 });
 
 // ==========================================
-// SEMÁFORO DE FATIGA CIENTÍFICO
+// SEMÁFORO DE FATIGA CIENTÍFICO (con ACWR)
 // ==========================================
 router.get('/semaforo-fatiga/:cliente_id', verificarUsuario, verificarPropiedadCliente, async (req, res) => {
     try {
@@ -302,8 +329,8 @@ router.get('/semaforo-fatiga/:cliente_id', verificarUsuario, verificarPropiedadC
             [req.params.cliente_id]
         );
 
-        // 2. Obtener carga aguda (volumen últimos 7 días)
-        const [carga] = await db.query(
+        // 2. Obtener carga aguda (7 días) Y carga crónica (28 días promedio semanal)
+        const [cargaAgudaResult] = await db.query(
             `SELECT COALESCE(SUM(peso_kg * repeticiones), 0) AS carga_aguda,
                     COUNT(DISTINCT DATE(fecha)) AS dias_entreno
              FROM Registro_Progreso 
@@ -311,24 +338,47 @@ router.get('/semaforo-fatiga/:cliente_id', verificarUsuario, verificarPropiedadC
             [req.params.cliente_id]
         );
 
-        const cargaAguda = carga[0]?.carga_aguda || 0;
-        const diasEntreno = carga[0]?.dias_entreno || 0;
+        const [cargaCronicaResult] = await db.query(
+            `SELECT COALESCE(SUM(peso_kg * repeticiones), 0) / 4 AS carga_cronica
+             FROM Registro_Progreso 
+             WHERE cliente_id = ? AND fecha >= DATE_SUB(CURDATE(), INTERVAL 28 DAY)`,
+            [req.params.cliente_id]
+        );
+
+        const cargaAguda = parseFloat(cargaAgudaResult[0]?.carga_aguda) || 0;
+        const diasEntreno = cargaAgudaResult[0]?.dias_entreno || 0;
+        const cargaCronica = parseFloat(cargaCronicaResult[0]?.carga_cronica) || 0;
         const readinessData = readiness[0] || null;
 
-        // 3. Algoritmo de fatiga
-        let puntuacion = 100; // Empieza en 100 (óptimo)
+        // 3. Calcular ACWR (Acute:Chronic Workload Ratio)
+        const acwr = cargaCronica > 0 ? parseFloat((cargaAguda / cargaCronica).toFixed(2)) : 1;
+
+        // 4. Algoritmo de fatiga mejorado
+        let puntuacion = 100;
         let factores = [];
 
-        // Factor: Carga aguda alta
-        if (cargaAguda > 15000) { puntuacion -= 25; factores.push('Volumen semanal muy alto'); }
-        else if (cargaAguda > 10000) { puntuacion -= 10; factores.push('Volumen semanal elevado'); }
+        // Factor: ACWR (Ratio Aguda:Crónica — estándar de oro en ciencia deportiva)
+        if (acwr > 1.5) { 
+            puntuacion -= 30; 
+            factores.push(`ACWR peligroso (${acwr}) — riesgo de lesión elevado`); 
+        } else if (acwr > 1.3) { 
+            puntuacion -= 15; 
+            factores.push(`ACWR elevado (${acwr}) — reducir carga`); 
+        } else if (acwr < 0.8 && cargaCronica > 0) {
+            puntuacion -= 5;
+            factores.push(`ACWR bajo (${acwr}) — desentrenamiento posible`);
+        }
+
+        // Factor: Carga aguda absoluta (para clientes sin historial crónico)
+        if (cargaAguda > 15000) { puntuacion -= 15; factores.push('Volumen semanal muy alto (>15,000 kg)'); }
+        else if (cargaAguda > 10000) { puntuacion -= 5; factores.push('Volumen semanal elevado'); }
 
         // Factor: Frecuencia alta
         if (diasEntreno >= 6) { puntuacion -= 15; factores.push('Entrenó 6+ días esta semana'); }
 
         // Factor: Readiness (si hay cuestionario reciente)
         if (readinessData) {
-            const esReciente = (new Date() - new Date(readinessData.fecha)) < 48 * 60 * 60 * 1000; // últimas 48h
+            const esReciente = (new Date() - new Date(readinessData.fecha)) < 48 * 60 * 60 * 1000;
             if (esReciente) {
                 if (readinessData.sueno <= 2) { puntuacion -= 20; factores.push(`Sueño pobre (${readinessData.sueno}/5)`); }
                 else if (readinessData.sueno <= 3) { puntuacion -= 10; }
@@ -361,6 +411,8 @@ router.get('/semaforo-fatiga/:cliente_id', verificarUsuario, verificarPropiedadC
             recomendacion,
             factores,
             carga_aguda: cargaAguda,
+            carga_cronica: cargaCronica,
+            acwr,
             dias_entreno: diasEntreno,
             readiness: readinessData
         });

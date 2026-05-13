@@ -204,6 +204,7 @@ router.get('/historial-mes/:cliente_id', verificarUsuario, verificarPropiedadCli
             LEFT JOIN Rutina_Ejercicios re ON rp.rutina_id = re.rutina_id AND rp.ejercicio_id = re.ejercicio_id
             WHERE rp.cliente_id = ? AND rp.fecha >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
             ORDER BY rp.fecha DESC, e.nombre, rp.serie_numero
+            LIMIT 500
         `;
         const [resultados] = await db.query(query, [req.params.cliente_id]);
         res.json(resultados);

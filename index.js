@@ -3,21 +3,53 @@ const express = require('express');
 const cors = require('cors');
 const http = require('http');
 const { Server } = require('socket.io');
+const rateLimit = require('express-rate-limit');
 
 const stripeKey = process.env.STRIPE_SECRET_KEY || 'sk_test_mock';
 const stripe = require('stripe')(stripeKey);
 const db = require('./config/db');
 
+// ==========================================
+// CORS — Solo orígenes autorizados
+// ==========================================
+const allowedOrigins = [
+  process.env.FRONTEND_URL,
+  'http://localhost:5173',
+  'http://localhost:3000'
+].filter(Boolean);
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    // Permitir requests sin origin (mobile apps, curl en dev)
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Bloqueado por CORS'));
+    }
+  },
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  credentials: true
+};
+
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
-  cors: {
-    origin: "*",
-    methods: ["GET", "POST"]
-  }
+  cors: corsOptions
 });
 
-app.use(cors());
+app.use(cors(corsOptions));
+
+// ==========================================
+// Rate Limiting — Protección contra abuso
+// ==========================================
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutos
+  max: 200,                  // 200 requests por ventana por IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Demasiadas peticiones. Intenta de nuevo en 15 minutos.' }
+});
+app.use(limiter);
 
 // Webhooks de Stripe (debe ir ANTES de express.json())
 app.post('/api/webhooks/stripe', express.raw({type: 'application/json'}), async (req, res) => {
